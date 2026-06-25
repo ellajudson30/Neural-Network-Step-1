@@ -228,6 +228,7 @@ D = torch.tensor(Data_set)
 R = torch.tensor(Ratios, dtype=torch.long)
 
 # Best way to split into training and testing sets? Taking last n rows will just be oscillating data
-
+# Do 4-way cross-validation. Do four rounds of testing/training. Divide data in to 4 groups at random.
+# Train on 3 and test on the other.
 
 
