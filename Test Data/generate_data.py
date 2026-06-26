@@ -3,7 +3,10 @@ import math
 import random 
 from scipy.integrate import RK45
 import torch
-from torch.utils.data import Dataset
+import torch.nn as nn
+from torch.utils.data import Dataset, Subset, DataLoader
+import torch.optim as optim
+import matplotlib.pyplot as plt
 
 # Exponential Decay
 lmda = 2  # increase to get more points
@@ -216,7 +219,7 @@ def generate_data(fcn, t0, y0, tf, tol):
                 # I_total += len(indices)
 
             # Create features/ratios and add to Dataset
-            data, ratios = build_features_solhist(indices, sol, ts, 5)
+            data, ratios = build_features_solhist(indices, sol, ts, 4)
             # data, ratios = build_features(indices, sol, ts, sh)
 
             Data_set.extend(data)
@@ -275,11 +278,132 @@ class myDataset(Dataset):
         y = self.labels[idx]
         return x,y
 
-# Convert Data to torch tensor
-D = torch.tensor(Data_set)
-R = torch.tensor(Ratios, dtype=torch.long)
+class myNN(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(10,32),
+            nn.ReLU(),
+            nn.Linear(32,32),
+            nn.ReLU(),
+            nn.Linear(32,1)
+        ) 
+    
+    def forward(self, x):
+        output = self.net(x)
+        return output
 
-# Best way to split into training and testing sets? Taking last n rows will just be oscillating data
+# # Convert Data to torch tensor
+# D = torch.tensor(Data_set)
+# R = torch.tensor(Ratios, dtype=torch.long)
+
+Dataset = myDataset(Data_set, Ratios)
+
+# start loop here
+
+# Split into training and test sets - 
+indices = np.arange(len(Dataset))
+
+test_index = indices[0::4]
+train_index = np.concatenate((indices[1::4], indices[2::4], indices[3::4])) # does this get all pts?
+
+TrainData = Subset(Dataset, train_index)
+TestData = Subset(Dataset, test_index)
+
+batch = 32
+Train_loader = DataLoader(TrainData, batch_size=batch)
+Test_loader = DataLoader(TestData, batch_size=batch)
+
+# Loss function and Optimizer
+model = myNN()
+loss_fcn = nn.BCEWithLogitsLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+def compute_accuracy(output, labels):
+    labels = labels.view(-1, 1)
+    pred = (output >= 0).float()
+    true_pos = ((pred == 1) & (labels == 1)).sum().item()
+    true_neg = ((pred == 0) & (labels == 0)).sum().item()
+    acc = (true_pos+true_neg)/labels.numel()
+
+    return acc
+
+def train_one_epoch(train_dataloader):
+    running_loss=0.0
+    running_acc=0.0
+
+    for batch, (X,y) in enumerate(train_dataloader):
+        y = y.float().unsqueeze(1)
+        optimizer.zero_grad()
+        output = model(X)
+        loss = loss_fcn(output, y)
+        loss.backward()
+        optimizer.step()
+
+        acc = compute_accuracy(output,y)
+        running_acc += acc
+        running_loss += loss.item()
+    
+    avg_acc = running_acc/len(train_dataloader)
+
+    return running_loss, avg_acc
+def test_one_epoch(test_dataloader):
+    test_running_loss=0.0
+    test_running_acc=0.0
+
+    with torch.no_grad():
+        for batch, (X,y) in enumerate(test_dataloader):
+            y = y.float().unsqueeze(1)
+            test_output = model(X)
+            loss = loss_fcn(test_output, y)
+
+            acc = compute_accuracy(test_output,y)
+            test_running_acc += acc
+            test_running_loss += loss.item()
+    
+    test_avg_acc = test_running_acc/len(test_dataloader)
+
+    return test_running_loss, test_avg_acc
+
+#Training Loop
+#-----------------------------------
+num_epochs = 20
+train_losses = []
+test_losses = []
+
+train_accuracy = []
+test_accuracy = []
+
+for epoch in range(num_epochs):
+    # Train
+    model.train()
+    loss, acc = train_one_epoch(Train_loader)
+    train_losses.append(loss)
+    train_accuracy.append(acc)
+    
+    # Test
+    model.eval()
+    test_loss, test_acc = test_one_epoch(Test_loader)
+    test_losses.append(test_loss)
+    test_accuracy.append(test_acc)
 
 
+# Plot the Losses
+plt.figure(1)
+plt.plot(range(num_epochs), train_losses, label = "Train Loss")
+plt.plot(range(num_epochs), test_losses, label = "Test Loss")
+plt.title("Training and Test Losses")
+plt.legend()
+plt.xlabel("Epoch")
+plt.ylabel("Loss")
+plt.show()
 
+# Plot the Accuracy
+plt.figure(2)
+plt.plot(range(num_epochs), train_accuracy, label="Train Accuracy")
+plt.plot(range(num_epochs), test_accuracy, label="Test Accuracy")
+plt.title("Training and Test Accuracy")
+plt.legend()
+plt.xlabel("Epoch")
+plt.ylabel("Loss")
+plt.show()
