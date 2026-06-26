@@ -6,15 +6,15 @@ import torch
 from torch.utils.data import Dataset
 
 # Exponential Decay
-lmda = 0.5
+lmda = 2  # increase to get more points
 ed_t_span = [0,5]
-ed_y0 = [1]
+ed_y0 = [1] # increase to get more points
 def exp_decay(t,y):
     return -lmda*y
 
 # Logistic
 log_t_span = [0,5]
-log_y0 = [0.125, 0.25, 0.5, 0.75, 1, 2] 
+log_y0 = [0.125, 0.25, 0.5, 0.75, 2] 
 def logistic(t,y):
     return y*(1-y)
 
@@ -117,6 +117,33 @@ def build_features(indices, solution, time_steps, stage_history):
         next_step_ratio.append(r_next)
 
     return data_list, next_step_ratio
+def build_features_solhist(indices, solution, time_steps, num_hist):
+
+    data_list = []
+    next_step_ratio = []
+    for i in indices:
+        # Check if at the end of the time span
+        if i == len(solution)-1:
+            pass
+        elif i < num_hist:
+            print("not enough solution history at this point")
+        else:
+            feature = []
+            for k in range(num_hist, -1, -1):
+                feature.append(float(solution[i-k]))
+
+            for j in range(num_hist, -1, -1):
+                r = time_steps[i-j]/time_steps[i-j-1]
+                feature.append(r)
+
+            data_list.append(feature)
+
+            # Create vector of next time steps
+            r_next = time_steps[i+1]/time_steps[i]
+            next_step_ratio.append(r_next)
+
+
+    return data_list, next_step_ratio
 
 # Function to generate data matrix and target ratios
 def generate_data(fcn, t0, y0, tf, tol):
@@ -143,29 +170,54 @@ def generate_data(fcn, t0, y0, tf, tol):
                 max_indices_yp = np.where(yp == yp.max())[0]
                 max_indices_yp2 = np.where(yp2 == yp2.max())[0]
 
+                # Find sections with smallest derivs
+                min_indices_yp = np.where(yp == yp.min())[0]
+                min_indices_yp2 = np.where(yp2 == yp2.min())[0]
+
                 # Find sections with ~0 derivative
                 zero_deriv_yp = np.where(abs(yp) < 1e-4)[0]
                 zero_deriv_yp2 = np.where(abs(yp2) < 1e-4)[0]
 
                 # Choose some sections at random
-                rand_points = random.sample(range(1, len(sol)-1), k=3)
+                # rand_points = random.sample(range(1, len(sol)-1), k=3)
                 # if points are same as others no new data is added for boring/normal section
 
                 window = 2  # size of interval 
-                for idx in np.concatenate((max_indices_yp, max_indices_yp2, zero_deriv_yp,
-                                           zero_deriv_yp2, rand_points)):
-                    start = max(1, idx-window) 
+                for idx in np.concatenate((max_indices_yp, max_indices_yp2, min_indices_yp,
+                                           min_indices_yp2,zero_deriv_yp, zero_deriv_yp2)):
+                    start = max(6, idx-window) 
                     #exclude 1 to avoid large ratio from chosen first step?????
                     
                     end = min(len(sol), idx+window+1)
 
                     I.extend(range(start, end))
 
+                # Add last data point to find differences 
+                I.append(len(sol)-1)
+                I = np.unique(I) # get rid of duplicates
+
+                if len(I) > 2 :
+                    diffs = np.diff(I)
+                    order = np.argsort(diffs)
+                    
+                    # Compute "boring" indices
+                    new_indices = []
+                    
+                    for k in [0,1]:
+                        Gap_index = order[-1-k]
+
+                        mid = I[Gap_index] + math.floor(0.5*(I[Gap_index+1]-I[Gap_index]))
+                        new_indices.append(int(mid))
+
+                    # Add new indices to I
+                    I = np.append(I, new_indices)
+
                 indices = np.unique(I)
                 # I_total += len(indices)
 
             # Create features/ratios and add to Dataset
-            data, ratios = build_features(indices, sol, ts, sh)
+            data, ratios = build_features_solhist(indices, sol, ts, 5)
+            # data, ratios = build_features(indices, sol, ts, sh)
 
             Data_set.extend(data)
             Step_ratios.extend(ratios)
