@@ -7,6 +7,7 @@ import torch.nn as nn
 from torch.utils.data import Dataset, Subset, DataLoader
 import torch.optim as optim
 import matplotlib.pyplot as plt
+from sklearn.model_selection import KFold, train_test_split
 
 # Exponential Decay
 lmda = 2  # increase to get more points
@@ -125,6 +126,7 @@ def build_features_solhist(indices, solution, time_steps, num_hist):
     data_list = []
     next_step_ratio = []
     for i in indices:
+
         # Check if at the end of the time span
         if i == len(solution)-1:
             pass
@@ -219,6 +221,7 @@ def generate_data(fcn, t0, y0, tf, tol):
                 # I_total += len(indices)
 
             # Create features/ratios and add to Dataset
+            # add log of tol 
             data, ratios = build_features_solhist(indices, sol, ts, 4)
             # data, ratios = build_features(indices, sol, ts, sh)
 
@@ -233,7 +236,7 @@ Data_set = []
 Ratios = []
 
 # 1. Exp Decay
-Data_exp, Sr_exp = generate_data(exp_decay, ed_t_span[0], ed_y0, ed_t_span[1], [1e-6, 1e-8, 1e-10])
+Data_exp, Sr_exp = generate_data(exp_decay, ed_t_span[0], ed_y0, ed_t_span[1], [1e-6, 1e-8, 1e-10, 1e-12])
 print("Examples generated with Exp Decay: ", len(Data_exp))
 Data_set.extend(Data_exp)
 Ratios.extend(Sr_exp)
@@ -241,21 +244,21 @@ print("Examples generated with Exp Decay: ", len(Data_exp))
 print("Total examples: ", len(Data_set))
 
 #2. Logistic
-Data_log, Sr_log = generate_data(logistic, log_t_span[0], log_y0, log_t_span[1], [1e-6, 1e-8, 1e-10])
+Data_log, Sr_log = generate_data(logistic, log_t_span[0], log_y0, log_t_span[1], [1e-6, 1e-8, 1e-10, 1e-12])
 Data_set.extend(Data_log)
 Ratios.extend(Sr_log)
 print("Examples generated with Logistic: ", len(Data_log))
 print("Total examples: ", len(Data_set))
 
 #3. Multiple Scales 
-Data_ms, Sr_ms = generate_data(multi_scales, ms_t_span[0], ms_y0, ms_t_span[1], [1e-6, 1e-8, 1e-10])
+Data_ms, Sr_ms = generate_data(multi_scales, ms_t_span[0], ms_y0, ms_t_span[1], [1e-6, 1e-8, 1e-10, 1e-12])
 Data_set.extend(Data_ms)
 Ratios.extend(Sr_ms)
 print("Examples generated with Multiple Scales: ", len(Data_ms))
 print("Total examples: ", len(Data_set))
 
 #4. Oscillating
-Data_o, Sr_o = generate_data(oscil, o_t_span[0], o_y0, o_t_span[1], [1e-6, 1e-8, 1e-10])
+Data_o, Sr_o = generate_data(oscil, o_t_span[0], o_y0, o_t_span[1], [1e-6, 1e-8, 1e-10, 1e-12])
 Data_set.extend(Data_o)
 Ratios.extend(Sr_o)
 print("Examples generated with Oscillating: ", len(Data_o))
@@ -278,14 +281,14 @@ class myDataset(Dataset):
         y = self.labels[idx]
         return x,y
 
-class myNN(nn.Module):
+class NN1(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(10,32),
-            nn.ReLU(),
+            nn.Tanh(), 
             nn.Linear(32,32),
-            nn.ReLU(),
+            nn.Tanh(),
             nn.Linear(32,1)
         ) 
     
@@ -293,46 +296,114 @@ class myNN(nn.Module):
         output = self.net(x)
         return output
 
-# # Convert Data to torch tensor
-# D = torch.tensor(Data_set)
-# R = torch.tensor(Ratios, dtype=torch.long)
+class NN2(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(10,24),
+            nn.Tanh(), 
+            nn.Linear(24,24),
+            nn.Tanh(),
+            nn.Linear(24,1)
+        ) 
+    
+    def forward(self, x):
+        output = self.net(x)
+        return output
 
+class NN3(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(10,16),
+            nn.Tanh(), 
+            nn.Linear(16,16),
+            nn.Tanh(),
+            nn.Linear(16,16),
+            nn.Tanh(),
+            nn.Linear(16,1)
+        ) 
+    
+    def forward(self, x):
+        output = self.net(x)
+        return output
 Dataset = myDataset(Data_set, Ratios)
 
-# start loop here
+# Split into training and test sets 
+Training_data, Testing_data = train_test_split(Dataset, test_size=0.2, random_state=42)
 
-# Split into training and test sets - 
-indices = np.arange(len(Dataset))
+# print(len(Training_data))
+# print(len(Testing_data))
 
-test_index = indices[0::4]
-train_index = np.concatenate((indices[1::4], indices[2::4], indices[3::4])) # does this get all pts?
+kfold = KFold(n_splits=4, shuffle=True, random_state=42)
 
-TrainData = Subset(Dataset, train_index)
-TestData = Subset(Dataset, test_index)
+num_epochs = 10
+CV_results = []
 
+# Do CV on Training Data
+for fold, (train_index, val_index) in enumerate(kfold.split(Training_data)):
+    
+    TrainData = Subset(Dataset, train_index)
+    ValData = Subset(Dataset, val_index)
+
+    batch = 16
+    Train_loader = DataLoader(TrainData, batch_size=batch)
+    Val_loader = DataLoader(ValData, batch_size=batch)
+
+    # Define model, loss function and optimizer
+    # model = NN1()
+    # model = NN2()
+    model = NN3()
+    loss_fcn = nn.MSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+    # Training
+    for epoch in range(num_epochs):
+        model.train()
+
+        for batch, (X,y) in enumerate(Train_loader):
+            y = y.float().unsqueeze(1)
+            optimizer.zero_grad()
+            output = model(X)
+            loss = loss_fcn(output, y)
+            loss.backward()
+            optimizer.step()
+    
+    # Validation
+    model.eval()
+    val_loss = 0.0
+    
+    with torch.no_grad():
+        for batch, (X,y) in enumerate(Val_loader):
+            y = y.float().unsqueeze(1)
+            test_output = model(X)
+            loss = loss_fcn(test_output, y)
+
+            val_loss += loss.item()
+
+    print(f"Fold {fold+1} MSE: ", val_loss)
+    CV_results.append(val_loss)
+
+print("Average MSE: ", sum(CV_results)/4)
+
+# Choose final set-up and retrain on whole training data
 batch = 32
-Train_loader = DataLoader(TrainData, batch_size=batch)
-Test_loader = DataLoader(TestData, batch_size=batch)
+Train_loader = DataLoader(Training_data, batch_size=batch)
+Test_loader = DataLoader(Testing_data, batch_size=batch)
 
-# Loss function and Optimizer
-model = myNN()
-loss_fcn = nn.BCEWithLogitsLoss()
+model = NN1()
+loss_fcn = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-def compute_accuracy(output, labels):
-    labels = labels.view(-1, 1)
-    pred = (output >= 0).float()
-    true_pos = ((pred == 1) & (labels == 1)).sum().item()
-    true_neg = ((pred == 0) & (labels == 0)).sum().item()
-    acc = (true_pos+true_neg)/labels.numel()
+train_losses = []
+test_losses = []
 
-    return acc
+# Training Loop
+for epoch in range(num_epochs):
+    model.train()
 
-def train_one_epoch(train_dataloader):
-    running_loss=0.0
-    running_acc=0.0
-
-    for batch, (X,y) in enumerate(train_dataloader):
+    train_loss = 0.0
+    for batch, (X,y) in enumerate(Train_loader):
         y = y.float().unsqueeze(1)
         optimizer.zero_grad()
         output = model(X)
@@ -340,70 +411,43 @@ def train_one_epoch(train_dataloader):
         loss.backward()
         optimizer.step()
 
-        acc = compute_accuracy(output,y)
-        running_acc += acc
-        running_loss += loss.item()
+        train_loss += loss.item()
+    train_losses.append(train_loss)
+
+    # Testing
+    model.eval()
     
-    avg_acc = running_acc/len(train_dataloader)
-
-    return running_loss, avg_acc
-def test_one_epoch(test_dataloader):
-    test_running_loss=0.0
-    test_running_acc=0.0
-
+    test_loss = 0.0
+    
     with torch.no_grad():
-        for batch, (X,y) in enumerate(test_dataloader):
+        for batch, (X,y) in enumerate(Test_loader):
             y = y.float().unsqueeze(1)
             test_output = model(X)
             loss = loss_fcn(test_output, y)
 
-            acc = compute_accuracy(test_output,y)
-            test_running_acc += acc
-            test_running_loss += loss.item()
-    
-    test_avg_acc = test_running_acc/len(test_dataloader)
+            test_loss += loss.item()
+        test_losses.append(test_loss)
 
-    return test_running_loss, test_avg_acc
-
-#Training Loop
-#-----------------------------------
-num_epochs = 20
-train_losses = []
-test_losses = []
-
-train_accuracy = []
-test_accuracy = []
-
-for epoch in range(num_epochs):
-    # Train
-    model.train()
-    loss, acc = train_one_epoch(Train_loader)
-    train_losses.append(loss)
-    train_accuracy.append(acc)
-    
-    # Test
-    model.eval()
-    test_loss, test_acc = test_one_epoch(Test_loader)
-    test_losses.append(test_loss)
-    test_accuracy.append(test_acc)
-
-
-# Plot the Losses
-plt.figure(1)
-plt.plot(range(num_epochs), train_losses, label = "Train Loss")
-plt.plot(range(num_epochs), test_losses, label = "Test Loss")
-plt.title("Training and Test Losses")
+plt.plot(range(num_epochs),train_losses, label = "Train Loss")
+plt.plot(range(num_epochs),test_losses, label = "Test Loss")
 plt.legend()
-plt.xlabel("Epoch")
-plt.ylabel("Loss")
 plt.show()
 
-# Plot the Accuracy
-plt.figure(2)
-plt.plot(range(num_epochs), train_accuracy, label="Train Accuracy")
-plt.plot(range(num_epochs), test_accuracy, label="Test Accuracy")
-plt.title("Training and Test Accuracy")
-plt.legend()
-plt.xlabel("Epoch")
-plt.ylabel("Loss")
-plt.show()
+print(train_losses)
+print(test_losses)
+
+
+ # test a few different set ups - arch, lr, batch_size, num_epochs
+ # pick final setup based on perf
+ # retrain final setup on whole training dataset
+ # evaluate on test set       
+
+
+
+
+
+
+
+
+
+
