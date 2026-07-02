@@ -1,6 +1,5 @@
 import numpy as np
 import math
-import random 
 from scipy.integrate import RK45
 import matplotlib.pyplot as plt
 import csv
@@ -142,10 +141,6 @@ def generate_data(fcn, t0, y0, tf, tol):
                 # Find sections with ~0 derivative
                 zero_deriv_yp = np.where(abs(yp) < 1e-4)[0]
                 zero_deriv_yp2 = np.where(abs(yp2) < 1e-4)[0]
-
-                # Choose some sections at random
-                # rand_points = random.sample(range(1, len(sol)-1), k=3)
-                # if points are same as others no new data is added for boring/normal section
 
                 window = 2  # size of interval 
                 for idx in np.concatenate((max_indices_yp, max_indices_yp2, min_indices_yp,
