@@ -14,7 +14,7 @@ def run_RK45(fcn, t0, y0, tf, tol):
     stage_history = []
 
     while solver.t < tf:
-        solution.append(solver.y[0]) # only works if one IC passed
+        solution.append(solver.y.copy())
         times.append(float(solver.t))
         
         t_old = solver.t
