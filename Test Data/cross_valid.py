@@ -217,12 +217,26 @@ for epoch in range(num_epochs):
 
 def testode1(t,y):
     return 4*y*(1-y)
-y0 = [0.5]
-t_span = [0, 5]
+y0 = [3]
+t_span = [0, 2*math.pi]
 tol = 1e-10
 
 def testode2(t,y):
-    return y*(1-y)
+    return y*math.sin(t)
+
+def testode3(t,y):
+    return y*(1-y) + y*math.cos(t)
+ 
+m = 0.5
+y0v = [2.0,0.0]
+def VanDerPol(t,Y):
+    y,v = Y
+    return [v, m*(1-y**2)*v - y]
+
+def shm(t,Y):
+    y,v = Y
+    return [v,-y]
+
 
 def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
 
@@ -238,7 +252,7 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
 
     while solver.t < tf:
 
-        solution.append(solver.y[0]) # only works if one IC passed
+        solution.append(solver.y.copy()) 
         times.append(float(solver.t))
         
         if len(time_steps) > numhist+1: 
@@ -246,7 +260,7 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
             feature = []
 
             for i in range(numhist,-1,-1):
-                feature.append(float(solution[-1-i]))
+                feature.append(float(solution[-1-i][0])) # added[0] to fix - 
             
             for j in range(numhist, -1,-1):
                 ratio = time_steps[-1-j]/time_steps[-2-j]
@@ -262,10 +276,10 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
             solver.h_abs = solver.h_abs * next_h
             # nn_steps.append(solver.h_abs)
         
-        # prevent overshoot of tf - does not work as needed
-        remaining = tf - solver.t
-        if solver.h_abs > remaining:
-            solver.h_abs = remaining
+        # # prevent overshoot of tf - does not work as needed
+        # remaining = tf - solver.t
+        # if solver.h_abs > remaining:
+        #     solver.h_abs = remaining
 
         nn_steps.append(solver.h_abs) # to check if RK45 adjusted the step
         t_old = solver.t
@@ -284,22 +298,57 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
 
     return times, solution, time_steps, errors, nn_steps
 
-times, sol, ts, errors, sh = run_RK45(testode1,t_span[0], y0, t_span[1], tol)
-times_nn, sol_nn, ts_nn, errors_nn, nn_steps = run_RK45_NN(testode1,t_span[0], y0, t_span[1], tol, model, 4)
-# print(ts)
-# print(ts_nn)
-print(len(ts))
-print(len(ts_nn))
+# times, sol, ts, errors, sh = run_RK45(testode2,t_span[0], y0, t_span[1], tol)
+# times_nn, sol_nn, ts_nn, errors_nn, nn_steps = run_RK45_NN(testode2,t_span[0], y0, t_span[1], tol, model, 4)
 
-predicted = np.array(ts_nn[5:100])
-actual = np.array(ts[5:100])
-rmse = np.sqrt(np.mean((predicted-actual)**2))
-rmse_steps = np.sqrt(np.mean((predicted-np.array(nn_steps)[5:100])**2))
-print(rmse)
-print(rmse_steps)
+# Compare error - rmse 
+# predicted = np.array(ts_nn[5:100])
+# actual = np.array(ts[5:100])
+# rmse = np.sqrt(np.mean((predicted-actual)**2))
+# rmse_steps = np.sqrt(np.mean((predicted-np.array(nn_steps)[5:100])**2))
+# print(rmse)
+# print(rmse_steps)
 
 # plt.plot(ts[5:])
 # plt.plot(ts_nn[5:])
 # plt.show()
 
- 
+# Testing 2nd order
+# times, sol, ts, errors, sh = run_RK45(VanDerPol,t_span[0], y0v, t_span[1], tol)
+# times_nn, sol, ts, errors, sh = run_RK45_NN(VanDerPol,t_span[0], y0v, t_span[1], tol, model, 4)
+# sol = np.array(sol)
+# sol_y = sol[:,0]
+# sol_v = sol[:,1]
+
+times, sol, ts, errors, sh = run_RK45(shm,t_span[0], y0v, t_span[1], tol)
+times_nn, sol, ts, errors, sh = run_RK45_NN(shm,t_span[0], y0v, t_span[1], tol, model, 4)
+
+# Compare the mappings of the controllers
+times_pi = np.array(times)
+times_nn = np.array(times_nn)
+N_pi = len(times_pi)
+N_nn = len(times_nn)
+
+print(N_pi)
+print(N_nn)
+
+# Construct the normalized coordinates
+pi_nvec = (1/(N_pi-1))*np.arange(0,N_pi)
+nn_nvec = (1/(N_nn-1))*np.arange(0,N_nn)
+
+# Plot distributions of timesteps
+plt.plot(pi_nvec, times, label="pi")
+plt.plot(nn_nvec, times_nn, label = "nn")
+plt.legend()
+plt.show()
+
+# Compute interpolation of mappings over fine uniform grid
+nxi = 5000
+xi = np.linspace(0,1,nxi)
+
+interp_pi = np.interp(xi, pi_nvec, times_pi)
+interp_nn = np.interp(xi, nn_nvec, times_nn)
+
+error = np.sqrt(np.mean((interp_pi-interp_nn)**2))
+print(error)
+
