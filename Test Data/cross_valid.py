@@ -2,6 +2,7 @@ import numpy as np
 import math
 import random 
 from scipy.integrate import RK45
+from scipy.integrate._ivp.rk import rk_step
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, Subset, DataLoader
@@ -26,15 +27,17 @@ class myDataset(Dataset):
         y = self.labels[idx]
         return x,y
 
+# Possible network architectures
+#-------------------------------------------------------------------------
 class NN1(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(11,32),
+            nn.Linear(11,48),
             nn.Tanh(), 
-            nn.Linear(32,32),
+            nn.Linear(48,48),
             nn.Tanh(),
-            nn.Linear(32,1)
+            nn.Linear(48,1)
         ) 
     
     def forward(self, x):
@@ -45,11 +48,11 @@ class NN2(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(11,24),
+            nn.Linear(11,64),
             nn.Tanh(), 
-            nn.Linear(24,24),
+            nn.Linear(64,64),
             nn.Tanh(),
-            nn.Linear(24,1)
+            nn.Linear(64,1)
         ) 
     
     def forward(self, x):
@@ -73,15 +76,18 @@ class NN3(nn.Module):
         output = self.net(x)
         return output
 
-# Open the CSV file
-with open('features.csv', mode='r', newline='', encoding='utf-8') as file:
+# Load Dataset
+#-------------------------------------------------------------------------
+
+# Open CSV file
+with open('features2.csv', mode='r', newline='', encoding='utf-8') as file:
     # Create a reader object
     csv_reader = csv.reader(file)
     
     # Convert the reader object directly into a list
     Data_set = [[float(x) for x in row] for row in csv_reader]
 
-with open('ratios.csv', mode='r', newline='', encoding='utf-8') as file:
+with open('ratios2.csv', mode='r', newline='', encoding='utf-8') as file:
     # Create a reader object
     csv_reader = csv.reader(file)
     
@@ -91,24 +97,24 @@ with open('ratios.csv', mode='r', newline='', encoding='utf-8') as file:
 print(f"Size of Data Matrix: {len(Data_set)}x{len(Data_set[0])}" )
 print(f"Size of Target Ratios: {len(Ratios)}x{len(Ratios[0])}" )
 
+# Convert into Pytorch Dataset
 Dataset = myDataset(Data_set, Ratios)
 
 # Split into training and test sets 
 Training_data, Testing_data = train_test_split(Dataset, test_size=0.2, random_state=42)
 
-# print(len(Training_data))
-# print(len(Testing_data))
-
+# Cross Validation - choose architecture
+#-------------------------------------------------------------------------------------
 kfold = KFold(n_splits=4, shuffle=True, random_state=42)
 
 num_epochs = 10
 CV_results = []
 
-# Do CV on Training Data
+# CV on Training Data
 for fold, (train_index, val_index) in enumerate(kfold.split(Training_data)):
     
-    TrainData = Subset(Dataset, train_index)
-    ValData = Subset(Dataset, val_index)
+    TrainData = Subset(Training_data, train_index)
+    ValData = Subset(Training_data, val_index)
 
     batch = 16
     Train_loader = DataLoader(TrainData, batch_size=batch)
@@ -204,7 +210,8 @@ for epoch in range(num_epochs):
         err = err/len(targets)
         norm_err.append(err.item())
 
-
+torch.save(model.state_dict(), 'model_weights_s1.pth')
+print("Model weights saved successfully!")
 # plt.plot(range(num_epochs),norm_err, label = "abs err")
 # plt.plot(range(num_epochs),test_losses, label = "Test Loss")
 # plt.legend()
@@ -212,143 +219,3 @@ for epoch in range(num_epochs):
 
 # print(norm_err)
 # print(test_losses)
-
-# Test trained NN 
-
-def testode1(t,y):
-    return 4*y*(1-y)
-y0 = [3]
-t_span = [0, 2*math.pi]
-tol = 1e-10
-
-def testode2(t,y):
-    return y*math.sin(t)
-
-def testode3(t,y):
-    return y*(1-y) + y*math.cos(t)
- 
-m = 0.5
-y0v = [2.0,0.0]
-def VanDerPol(t,Y):
-    y,v = Y
-    return [v, m*(1-y**2)*v - y]
-
-def shm(t,Y):
-    y,v = Y
-    return [v,-y]
-
-
-def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
-
-    solver = RK45(fcn,t0, y0, tf, rtol=tol, atol=tol)
-    
-    # Storage arrays
-    times = []
-    solution = []
-    time_steps = []
-    errors = []
-    nn_steps = []
-    # stage_history = []
-
-    while solver.t < tf:
-
-        solution.append(solver.y.copy()) 
-        times.append(float(solver.t))
-        
-        if len(time_steps) > numhist+1: 
-
-            feature = []
-
-            for i in range(numhist,-1,-1):
-                feature.append(float(solution[-1-i][0])) # added[0] to fix - 
-            
-            for j in range(numhist, -1,-1):
-                ratio = time_steps[-1-j]/time_steps[-2-j]
-                feature.append(ratio)
-            feature.append(float(np.log(tol)))
-
-            feat_ten = torch.tensor(feature, dtype=torch.float32)
-
-            with torch.no_grad():
-                model.eval()
-                next_h = model(feat_ten.unsqueeze(0)).item()
-            
-            solver.h_abs = solver.h_abs * next_h
-            # nn_steps.append(solver.h_abs)
-        
-        # # prevent overshoot of tf - does not work as needed
-        # remaining = tf - solver.t
-        # if solver.h_abs > remaining:
-        #     solver.h_abs = remaining
-
-        nn_steps.append(solver.h_abs) # to check if RK45 adjusted the step
-        t_old = solver.t
-        
-        solver.step()
-        h = solver.t - t_old
-        time_steps.append(float(h))
-        # stage_history.append(solver.K.copy())
-
-        scale = solver.atol + solver.rtol * np.maximum(np.abs(solver.y_old), 
-                                                    np.abs(solver.y))
-        
-        err = solver._estimate_error_norm(solver.K, h, scale)
-
-        errors.append(float(err))
-
-    return times, solution, time_steps, errors, nn_steps
-
-# times, sol, ts, errors, sh = run_RK45(testode2,t_span[0], y0, t_span[1], tol)
-# times_nn, sol_nn, ts_nn, errors_nn, nn_steps = run_RK45_NN(testode2,t_span[0], y0, t_span[1], tol, model, 4)
-
-# Compare error - rmse 
-# predicted = np.array(ts_nn[5:100])
-# actual = np.array(ts[5:100])
-# rmse = np.sqrt(np.mean((predicted-actual)**2))
-# rmse_steps = np.sqrt(np.mean((predicted-np.array(nn_steps)[5:100])**2))
-# print(rmse)
-# print(rmse_steps)
-
-# plt.plot(ts[5:])
-# plt.plot(ts_nn[5:])
-# plt.show()
-
-# Testing 2nd order
-# times, sol, ts, errors, sh = run_RK45(VanDerPol,t_span[0], y0v, t_span[1], tol)
-# times_nn, sol, ts, errors, sh = run_RK45_NN(VanDerPol,t_span[0], y0v, t_span[1], tol, model, 4)
-# sol = np.array(sol)
-# sol_y = sol[:,0]
-# sol_v = sol[:,1]
-
-times, sol, ts, errors, sh = run_RK45(shm,t_span[0], y0v, t_span[1], tol)
-times_nn, sol, ts, errors, sh = run_RK45_NN(shm,t_span[0], y0v, t_span[1], tol, model, 4)
-
-# Compare the mappings of the controllers
-times_pi = np.array(times)
-times_nn = np.array(times_nn)
-N_pi = len(times_pi)
-N_nn = len(times_nn)
-
-print(N_pi)
-print(N_nn)
-
-# Construct the normalized coordinates
-pi_nvec = (1/(N_pi-1))*np.arange(0,N_pi)
-nn_nvec = (1/(N_nn-1))*np.arange(0,N_nn)
-
-# Plot distributions of timesteps
-plt.plot(pi_nvec, times, label="pi")
-plt.plot(nn_nvec, times_nn, label = "nn")
-plt.legend()
-plt.show()
-
-# Compute interpolation of mappings over fine uniform grid
-nxi = 5000
-xi = np.linspace(0,1,nxi)
-
-interp_pi = np.interp(xi, pi_nvec, times_pi)
-interp_nn = np.interp(xi, nn_nvec, times_nn)
-
-error = np.sqrt(np.mean((interp_pi-interp_nn)**2))
-print(error)
-
