@@ -122,12 +122,12 @@ def build_features_trial_err(solver, indices, full_solution, sol_comp, times, ti
                     feature.append(sol_comp[i-k])
 
                 for j in range(num_hist, -1, -1):
-                    r = time_steps[i-j]/time_steps[i-j-1]
+                    r = time_steps[i-1-j]/time_steps[i-2-j]
                     feature.append(r)
 
                 feature.append(np.log(tol))
 
-                h = time_steps[i] 
+                h = time_steps[i-1] 
                 h_next = n*h
                 feature.append(h_next/h)
 
@@ -168,7 +168,7 @@ def generate_data(fcn, t0, y0, tf, tol, ord):
                 init_value = i
                 # times, sol, ts, err, sh = run_RK45(fcn, t0, i, tf, j)
             # check that thee outputs are correct
-            times, sol, ts, err, acc_steps, rej_steps, rejections_per_step = run_RK45(fcn, 
+            times, sol, ts, err, rej_err, acc_steps, rej_steps, rejections_per_step = run_RK45(fcn, 
                                                     t0, init_value, tf, j) 
             
             sol_comps = []
@@ -235,7 +235,7 @@ def generate_data(fcn, t0, y0, tf, tol, ord):
 
                 indices = np.unique(I)
 
-            next_steps = [0.5, 0.75, 1, 1.5, 2]
+            next_steps = [0.75, 0.9, 1, 1.1, 1.25, 1.5]
             solver = RK45(fcn, t0, init_value, tf, rtol=j, atol=j) # can we get rid of somehow?
             data, errors = build_features_trial_err(solver, indices, full_sol, sol, times, ts, next_steps, 4, j)
 
@@ -332,15 +332,15 @@ print("Total examples: ", len(Data_set))
 
 print(f"Size of Data Matrix: {len(Data_set)}x{len(Data_set[0])}" )
 
-# # Store Dataset as a csv file
-# #----------------------------------------------------------------------------
-# with open("features.csv", mode="w", newline="", encoding="utf-8") as file:
-#     writer = csv.writer(file)
-#     writer.writerows(Data_set)
+# Store Dataset as a csv file
+#----------------------------------------------------------------------------
+with open("features.csv", mode="w", newline="", encoding="utf-8") as file:
+    writer = csv.writer(file)
+    writer.writerows(Data_set)
 
-# with open("errors.csv", mode="w", newline="", encoding="utf-8") as file:
-#     writer = csv.writer(file)
-#     writer.writerows([[r] for r in Errors])
+with open("errors.csv", mode="w", newline="", encoding="utf-8") as file:
+    writer = csv.writer(file)
+    writer.writerows([[r] for r in Errors])
 
     
 
