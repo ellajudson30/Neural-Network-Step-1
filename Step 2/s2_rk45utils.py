@@ -14,6 +14,7 @@ class RK45_counting(RK45):
         self.rejections_per_step = []
         self.error_norms = []
         self.rejected_error_norms = []
+        # self.rejections_this_step = 0
 
     def _step_impl(self):
         SAFETY = 0.9
@@ -72,6 +73,8 @@ class RK45_counting(RK45):
                 h_abs *= factor
                 step_accepted = True
             else:
+                # make changes in here to change interp? 
+
                 h_abs *= max(MIN_FACTOR,
                              SAFETY * error_norm ** self.error_exponent)
                 step_rejected = True
@@ -109,7 +112,6 @@ def run_RK45(fcn, t0, y0, tf, tol):
     solution = []
     time_steps = []
     errors = []
-    # rejected_errors = []
     # stage_history = []
 
     while solver.t < tf:
@@ -134,10 +136,17 @@ def run_RK45(fcn, t0, y0, tf, tol):
 
     rejected_errors = solver.rejected_error_norms
 
+    # Compute ratios
+    ts_ratios = []
+    for i in range(1, len(time_steps)):
+        ratio = time_steps[i]/time_steps[i-1]
+        ts_ratios.append(ratio)
+        
     return (
         np.array(times), 
         np.array(solution), 
         np.array(time_steps), 
+        np.array(ts_ratios),
         np.array(errors),
         np.array(rejected_errors),
         solver.accepted_steps,
@@ -195,3 +204,26 @@ def compute_trial_err(solver, index, next_step_pct, times, solution, time_steps)
     err_norm = solver._estimate_error_norm(K_trial, h_trial, scale)
 
     return err, err_norm
+
+def compute_current_trial_err(solver, h_trial):
+    t = solver.t
+    y = solver.y.copy()
+    h_trial = min(h_trial, solver.t_bound - t)
+
+    K_trial = np.empty((solver.n_stages + 1, solver.n), dtype=solver.y.dtype)
+    fcn = solver.fun
+    f = np.asarray(fcn(t,y), dtype=float)
+
+    y_trial, f_trial = rk_step(fcn, t, y, f, h_trial, solver.A, solver.B, 
+                                   solver.C, K_trial)
+    
+    # err = solver._estimate_error(K_trial, h_trial)
+    scale = solver.atol + solver.rtol * np.maximum(np.abs(y), np.abs(y_trial))
+    
+    err_norm = solver._estimate_error_norm(K_trial, h_trial, scale)
+
+    return err_norm
+
+
+
+
