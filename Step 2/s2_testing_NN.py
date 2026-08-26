@@ -2,13 +2,10 @@ import numpy as np
 import math 
 from scipy.integrate import RK45
 from scipy.integrate._ivp.rk import rk_step
+from scipy.interpolate import interp1d
 import torch
 import torch.nn as nn
-# from torch.utils.data import Dataset, Subset, DataLoader
-# import torch.optim as optim
 import matplotlib.pyplot as plt
-# from sklearn.model_selection import KFold, train_test_split
-# import csv
 from s2_rk45utils import *
 import time
 
@@ -36,15 +33,15 @@ model.eval()
 # Define test ODES
 def testode1(t,y):
     return -2*y  - 50*(y-math.cos(t)) - math.sin(t)
-y0 = [1]
-t_span = [0,0.95]
-tol = 1e-9
+y0 = [0.75]
+t_span = [0,5]
+tol = 1e-8
 
 def testode2(t,y): 
-    return y*math.sin(t) + y*math.cos(t)
+    return y*math.cos(t)
 
 def testode3(t,y):
-    return y*(1-y) + y*math.cos(t)
+    return y*(1-y)
 
 def testode4(t,y):
     return -y**3 
@@ -56,7 +53,8 @@ def testode_damped(t,Y):
     y,v= Y
     return [v, -0.2*v - y]
  
-m = 3
+m = 1
+v_tspan = [0, 4*math.pi]
 y0v = [2.0,0.0]
 def VanDerPol(t,Y):
     y,v = Y
@@ -94,7 +92,8 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
     """
     
     solver = RK45_counting(fcn,t0, y0, tf, rtol=tol, atol=tol)
-    
+    model.eval()
+
     # Storage arrays
     times = []
     solution = []
@@ -108,7 +107,7 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
         times.append(float(solver.t))
         
         # Check if we have enough history 
-        if len(time_steps) > numhist+1: 
+        if len(time_steps) > numhist+2: 
 
             # Construct feature vector to pass to NN
             feature = []
@@ -124,39 +123,92 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
 
             # Create features to obtain error above and below desired tol
             feat_low = feature.copy()
-            feat_low.append(2/3)
+            feat_low.append(0.5)
+
+            feat_mid = feature.copy()
+            feat_mid.append(1)
 
             feat_high = feature.copy()
-            feat_high.append(3/2)
+            feat_high.append(1.25)
 
             # Predict next step with NN
             feat_high_ten = torch.tensor(feat_high, dtype=torch.float32)
+            feat_mid_ten = torch.tensor(feat_mid, dtype=torch.float32)
             feat_low_ten = torch.tensor(feat_low, dtype=torch.float32)
 
             with torch.no_grad():
-                model.eval()
                 high_err = model(feat_high_ten.unsqueeze(0)).item()
+                mid_err = model(feat_mid_ten.unsqueeze(0)).item()
                 low_err = model(feat_low_ten.unsqueeze(0)).item()
             
-            # Interpolate between values to find step - 2 points
-            trial_ratios = np.array([2/3, 3/2], dtype=float)
-            pred_errors = np.array([low_err, high_err], dtype=float)
-            target_tol = np.log(0.9) # bc error normalised
+            # # Interpolate between values to find step - 2 points
+            # trial_ratios = np.array([3/4, 3/2], dtype=float)
+            # pred_errors = np.array([low_err, high_err], dtype=float)
+            # target_tol = np.log(1)
+
+            # Interpolate to find step - quadratic, 3 points
+            trial_ratios = np.array([0.5, 1, 1.25], dtype=float)
+            pred_errors = np.array([low_err, mid_err, high_err], dtype=float)
+            target_tol = np.log(1)
+
 
             # Check that prediction behaves as expected before making r_new choice
-            if high_err <= low_err:  # Predictions violate expected monotonicity.
+            if not (low_err < mid_err < high_err):  # Predictions violate expected monotonicity.
                 r_new = 1.0
+                print("non-monotone")
 
             elif target_tol <= low_err:
-                r_new = 2/3
+                r_new = 0.5
 
             elif target_tol >= high_err:
-                r_new = 3/2
+                r_new = 1.5
 
             else:
-                r_new = np.interp(target_tol, pred_errors, trial_ratios)
+                # r_new = 0.95*np.interp(target_tol, pred_errors, trial_ratios)
 
-            r_new = float(np.clip(r_new, 2/3, 3/2))
+                quad_interp = interp1d(pred_errors, trial_ratios, kind='quadratic')
+                r_new = 0.95*float(quad_interp(target_tol))
+
+                h_trial = solver.h_abs*r_new
+
+                # Compute trial error to see if rejected
+                err_norm = compute_current_trial_err(solver, h_trial)
+                print(f"NN prediction is {r_new} with error {err_norm}")
+
+                max_retries = 15 # this is preventing accuracy
+                retry = 0
+                # old_r = r_new
+                while err_norm > 1 and retry < max_retries:
+
+                    old_r = r_new
+
+                    x_ratios = [0.5, 1, r_new]
+                    y_errors = [low_err, mid_err, np.log(err_norm)]
+
+                    if np.min(y_errors) < target_tol < np.max(y_errors):
+
+                        quad_interp2 = interp1d(y_errors, x_ratios, kind='quadratic')
+                        candidate_r = 0.95*float(quad_interp2(target_tol))
+
+                    else:
+                        candidate_r = 0.95*old_r
+
+                    r_new = candidate_r
+                    h_trial = solver.h_abs*r_new
+                    err_norm = compute_current_trial_err(solver, h_trial)
+
+                    print(f"r has been adjusted to {candidate_r} with error {err_norm}")
+
+                    retry += 1
+
+
+                    # if err_norm <= 1 :
+                    #     Valid_error = True
+                    #     print(f"Final adjusted r_new is ", r_new)
+                    # else:
+                    #     print(f"r_new had been adjusted to ", r_new)
+
+            # r_new = float(np.clip(r_new, 0.5, 1.5))
             solver.h_abs = solver.h_abs * r_new           
 
         nn_proposed_steps.append(solver.h_abs) 
@@ -167,24 +219,34 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
         h = solver.t - t_old
         time_steps.append(float(h))
 
-        scale = solver.atol + solver.rtol * np.maximum(np.abs(solver.y_old), 
-                                                    np.abs(solver.y))
+        # scale = solver.atol + solver.rtol * np.maximum(np.abs(solver.y_old), 
+        #                                             np.abs(solver.y))
         
-        err = solver._estimate_error_norm(solver.K, h, scale)
+        # err = solver._estimate_error_norm(solver.K, h, scale)
 
-        errors.append(float(err))
+        # errors.append(float(err))
+
+    # Compute ratios
+    ts_ratios = []
+    for i in range(1, len(time_steps)):
+        ratio = time_steps[i]/time_steps[i-1]
+        ts_ratios.append(ratio)
+
+    errors = solver.error_norms
 
     return (
         np.array(times), 
         np.array(solution), 
-        np.array(time_steps), 
+        np.array(time_steps),
+        np.array(ts_ratios), 
         np.array(errors), 
         np.array(solver.rejected_error_norms),
         solver.rejected_steps,
-        np.array(nn_proposed_steps))
+        np.array(nn_proposed_steps),
+        np.array(solver.rejections_per_step))
 
 # Need to figure out how to adjust when error is very small*******
-def run_RK45_NN2(fcn, t0, y0, tf, tol, model, numhist, use_rejection=True):
+# def run_RK45_NN2(fcn, t0, y0, tf, tol, model, numhist, use_rejection=True):
 
     solver = RK45(fcn,t0, y0, tf, rtol=tol, atol=tol)
     model.eval()
@@ -322,14 +384,14 @@ def run_RK45_NN2(fcn, t0, y0, tf, tol, model, numhist, use_rejection=True):
 
 # First order ODE
 start_time_pi = time.perf_counter()
-times_pi, sol, ts_pi, errors_pi, rej_errors_pi, acc_steps_pi, rej_steps_pi, rej_per_step_pi = run_RK45(testode5,
+times_pi, sol, ts_pi, _, errors_pi, rej_errors_pi, acc_steps_pi, rej_steps_pi, rej_per_step_pi = run_RK45(testode2,
                                                     t_span[0], y0, t_span[1], tol)
 end_time_pi = time.perf_counter()
 
 start_time_nn = time.perf_counter()
-# times_nn, sol_nn, ts_nn, errors_nn, nn_steps, nn_rat, rej_err, acc_steps, rej_steps = run_RK45_NN2(testode4,
+# times_nn, sol_nn, ts_nn, ts_rat, errors_nn, nn_steps, nn_rat, rej_err, acc_steps, rej_steps = run_RK45_NN2(testode4,
 #                                         t_span[0], y0, t_span[1], tol, model, 4)
-times_nn, sol_nn, ts_nn, errors_nn, rej_errors_nn, rej_steps_nn, nn_prop_steps = run_RK45_NN(testode5,
+times_nn, sol_nn, ts_nn, _, errors_nn, rej_errors_nn, rej_steps_nn, nn_prop_steps, rej_per_step_nn = run_RK45_NN(testode2,
                                             t_span[0], y0, t_span[1], tol, model, 4)
 end_time_nn = time.perf_counter()
 
@@ -343,13 +405,36 @@ print(f"Pi rejected errors : ", rej_errors_pi)
 print(f"NN rejected steps : ", rej_steps_nn)
 print(f"NN rejected errors : ", rej_errors_nn)
 
+# print(rej_per_step_nn)
+
+
 #-----------------------------
 # Second Order ODE
-# times_pi, sol, ts, errors, sh = run_RK45(VanDerPol,t_span[0], y0v, t_span[1], tol)
-# times_nn, sol, ts, errors, sh = run_RK45_NN(VanDerPol,t_span[0], y0v, t_span[1], tol, model, 4)
+# start_time_pi = time.perf_counter()
+# times_pi, _, ts_pi, _, errors_pi, rej_errors_pi, _, rej_steps_pi, _ = run_RK45(shm, 
+#                                                                 v_tspan[0], y0v, v_tspan[1], tol)
+# end_time_pi = time.perf_counter()
+
+# start_time_nn = time.perf_counter()
+# times_nn, _, ts_nn, _, errors_nn, rej_errors_nn, rej_steps_nn, _, _ = run_RK45_NN(shm,
+#                                                         v_tspan[0], y0v, v_tspan[1], tol, model, 4)
+# end_time_nn = time.perf_counter()
+
+# # Diagnostics
+# print(f"Pi execution time: {end_time_pi-start_time_pi:.6f} seconds")
+# print(f"NN execution time: {end_time_nn-start_time_nn:.6f} seconds")
+
+# print(f"Pi rejected steps : ", rej_steps_pi)
+# print(f"Pi rejected errors : ", rej_errors_pi)
+
+# print(f"NN rejected steps : ", rej_steps_nn)
+# print(f"NN rejected errors : ", rej_errors_nn)
+
+# print(ts_pi)
+# print(ts_nn)
 
 #-------------------------------
-# Lorenz/Rossler
+# Lorenz/Rossler (3rd order system)
 # start_time_pi = time.perf_counter()
 # times_pi, sol, ts, errors_pi = run_RK45(Lorenz,L_t_span[0], L_y0, L_t_span[1], tol_L)
 # end_time_pi = time.perf_counter()
