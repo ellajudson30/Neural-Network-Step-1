@@ -51,6 +51,32 @@ for val in m:
         return [v, val*(1-y**2)*v - y]
     VDP_fcns.append(VanDerPol)
 
+# Damped Harmonic Motion
+d_t_span = [0, 6*math.pi]
+d_y0 = [[0.5, 0.0], [1.0, 1.0], [2.0, 0.0], [0.0, 2.0], [3.0, -1.0],]
+def damped_hm(t,Y):
+    y,v= Y
+    return [v, -0.2*v - y]
+
+# ODE that blows up
+bu_t_span = [0,0.95]
+bu_y0 = [0.75, 0.85,0.95, 1]
+def blows_up(t,y):
+    return y**2
+
+# Lorenz - standard parameters
+sigma = 10
+r_vals = [28, 317]
+b = 8/3
+L_t_span = [0,5]
+L_y0 = [[0.0, 1.0, 20.0], [1.0, 1.0, 1.0]]
+L_fcns = []
+for r in r_vals:
+    def Lorenz(t,Y):
+        x,y,z = Y
+        return [sigma*(y-x), r*x-y-x*z, x*y-b*z]
+    L_fcns.append(Lorenz)
+
 # Functions for Data Generating
 #---------------------------------------------------------------------
 
@@ -162,10 +188,19 @@ def generate_data(fcn, t0, y0, tf, tol, ord):
         for j in tol:
             if ord ==1:
                 times, sol, ts, err, sh = run_RK45(fcn, t0, [i], tf, j)
-            elif ord == 2:
+            else:
                 times, sol, ts, err, sh = run_RK45(fcn, t0, i, tf, j)
             
-            sol = sol[:,0]
+            
+            sol_comps = []
+            for k in range(0,len(sol[0])):
+                sol_comps.append(np.array(sol[:,k]))
+
+            diffs = np.ptp(sol_comps, axis=1)
+            max_var = np.argmax(diffs)
+            sol = sol[:,max_var]
+
+            # sol = sol[:,0] # change this line
              
             yp = approx_first_deriv2(sol, times)
             yp2 = approx_second_deriv2(sol, times)
@@ -279,9 +314,40 @@ for f in VDP_fcns:
     Data_set.extend(Data_vdp)
     Ratios.extend(Sr_vdp)
     Total_ex += len(Data_vdp)
-
 print("Examples generated with VanDerPol: ", Total_ex)
 print("Total examples: ", len(Data_set))
+
+#7. Damped Harmonic Motion
+Data_d, Sr_d = generate_data(damped_hm, d_t_span[0], d_y0, d_t_span[1], [1e-3, 1e-6, 1e-8, 1e-10], 2)
+Data_set.extend(Data_d)
+Ratios.extend(Sr_d)
+print("Examples generated with Damped HM : ", len(Data_d))
+print("Total examples: ", len(Data_set))
+
+#8. ODE that Blows up 
+Data_bu, Sr_bu = generate_data(blows_up, bu_t_span[0], bu_y0, bu_t_span[1], [1e-6, 1e-8, 1e-10, 1e-12],1)
+Data_set.extend(Data_bu)
+Ratios.extend(Sr_bu)
+print("Examples generated with y' = y**2: ", len(Data_bu))
+print("Total examples: ", len(Data_set))
+
+# #9. Lorenz - standard parameters
+# Data_l, Sr_l = generate_data(Lorenz, L_t_span[0], L_y0, L_t_span[1], [1e-3, 1e-6, 1e-8, 1e-10],3)
+# Data_set.extend(Data_l)
+# Ratios.extend(Sr_l)
+# print("Examples generated with Lorenz: ", len(Data_l))
+# print("Total examples: ", len(Data_set))
+
+#9. Lorenz
+Total_ex = 0
+for f in L_fcns:
+    Data_L, Sr_L = generate_data(f, L_t_span[0], L_y0, L_t_span[1], [1e-3, 1e-6, 1e-8, 1e-10], 3)
+    Data_set.extend(Data_L)
+    Ratios.extend(Sr_L)
+    Total_ex += len(Data_L)
+print("Examples generated with Lorenz: ", Total_ex)
+print("Total examples: ", len(Data_set))
+
 
 print(f"Size of Data Matrix: {len(Data_set)}x{len(Data_set[0])}" )
 
