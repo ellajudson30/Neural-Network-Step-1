@@ -16,9 +16,9 @@ class NN(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(11,48),
-            nn.SiLU(), 
+            nn.Tanh(), 
             nn.Linear(48,48),
-            nn.SiLU(),
+            nn.Tanh(),
             nn.Linear(48,1)
         ) 
     
@@ -36,18 +36,18 @@ model.eval()
 # Define test ODES
 def testode1(t,y):
     return -2*y  - 50*(y-math.cos(t)) - math.sin(t)
-y0 = [1.5]
+y0 = [1]
 t_span = [0,5]
-tol = 1e-9
+tol = 1e-10
 
 def testode2(t,y): 
-    return y*math.sin(t) + y*math.cos(t)
+    return y*math.cos(t)
 
 def testode3(t,y):
-    return y*(1-y) + y*math.cos(t)
+    return y*(1-y)
 
 def testode4(t,y):
-    return -y**3 + y*math.cos(t)
+    return -y
 
 def testode5(t,y):
     return y**2
@@ -100,19 +100,23 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
     times = []
     solution = []
     time_steps = []
+    ratios = []
     errors = []
-    nn_steps = []
     nn_proposed_steps = []
+    nn_proposed_ratios = []
+    # nn_proposed_times = []
+    # nn_proposed_times.append(t0)
 
-    # Make change to also store times from nn proposed steps(before solver)
     while solver.t < tf:
 
         solution.append(solver.y.copy()) 
         times.append(float(solver.t))
+
+        prediction_made = False
         
         # Check if we have enough history 
-        if len(time_steps) > numhist+1: 
-            
+        if len(time_steps) > numhist + 3: 
+
             # Construct feature vector to pass to NN
             feature = []
 
@@ -128,20 +132,33 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
             # Predict next step with NN
             feat_ten = torch.tensor(feature, dtype=torch.float32)
             with torch.no_grad():
-                # model.eval()
-                r_new = model(feat_ten.unsqueeze(0)).item()
-            
-            solver.h_abs = solver.h_abs * r_new
-            # nn_steps.append(solver.h_abs)
+                r_nn = model(feat_ten.unsqueeze(0)).item()
+                # print(r_new)
 
-        nn_proposed_steps.append(solver.h_abs) # to check if RK45 adjusted the step
-        t_old = solver.t
+            # # Prevent pathological NN predictions
+            # r_new = np.clip(r_new, 0.2, 3.0)
+            # print(r_new)
+
+            h_nn = time_steps[-1]*r_nn
+            
+            # Alter pi controller
+            # solver.h_abs = solver.h_abs * r_new
+
+
+            prediction_made = True
         
-        # Take RK step with NN prediction 
+        # Take RK step 
+        t_old = solver.t
         solver.step()
-        h = solver.t - t_old
-        time_steps.append(float(h))
-        # stage_history.append(solver.K.copy())
+        h_pi = solver.t - t_old
+
+        if prediction_made:
+            nn_proposed_steps.append(h_nn) 
+            nn_proposed_ratios.append(r_nn)
+
+            r_pi = h_pi/time_steps[-1]
+            ratios.append(r_pi)   
+        time_steps.append(float(h_pi))
 
         # scale = solver.atol + solver.rtol * np.maximum(np.abs(solver.y_old), 
         #                                             np.abs(solver.y))
@@ -150,11 +167,12 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
 
         # errors.append(float(err))
     
+    # fix how this is computed to match when predictions are being made
     # Compute ratios
-    ts_ratios = []
-    for i in range(1, len(time_steps)):
-        ratio = time_steps[i]/time_steps[i-1]
-        ts_ratios.append(ratio)
+    # pi_ratios = []
+    # for i in range(1, len(time_steps)):
+    #     ratio = time_steps[i]/time_steps[i-1]
+    #     pi_ratios.append(ratio)
 
     errors = solver.error_norms
 
@@ -162,11 +180,12 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
         np.array(times), 
         np.array(solution), 
         np.array(time_steps), 
-        np.array(ts_ratios),
+        np.array(ratios),
         np.array(errors), 
         np.array(solver.rejected_error_norms),
         solver.rejected_steps,
         np.array(nn_proposed_steps),
+        np.array(nn_proposed_ratios),
         np.array(solver.rejections_per_step))
 
 # def run_RK45_NN2(fcn, t0, y0, tf, tol, model, numhist, use_rejection=True):
@@ -330,14 +349,34 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
             with torch.no_grad():
                 r_new = model(feat_ten.unsqueeze(0)).item()
     return 
+
 # Test performance of NN predictions
 #--------------------------------------------------------------------------------
 
 # First order ODE
-times_pi, sol, ts, ts_ratios, errors, _, _, _, _ = run_RK45(testode2,t_span[0], y0, t_span[1], tol)
+times_pi, sol, ts, ratios_pi, errors, _, _, _, _ = run_RK45(testode2,t_span[0], y0, t_span[1], tol)
 # times_nn, sol_nn, ts_nn, errors_nn, prop_steps_nn, prop_ratios, rejected_errors_nn, acc_steps, rej_steps = run_RK45_NN(testode3,
 #                                                                     t_span[0], y0, t_span[1], tol, model, 4)
-times_nn, sol_nn, ts_nn, ts_ratios_nn, errors_nn, _,_,_,_ = run_RK45_NN(testode2,t_span[0], y0, t_span[1], tol, model, 4)
+
+times_nn, sol_nn, ts_nn, ratios_pi_comp, errors_nn, _,rej_steps, prop_steps, ratios_nn, _ = run_RK45_NN(testode2,t_span[0], y0, t_span[1], tol, model, 4)
+
+plt.plot(errors)
+plt.show()
+
+print(len(ratios_nn))
+print(len(ratios_pi_comp))
+print(ratios_nn-ratios_pi_comp)
+err_rms_rat = np.sqrt(np.mean((ratios_pi_comp[:-1]-ratios_nn[:-1])**2))
+print(err_rms_rat)
+
+plt.plot(ratios_pi_comp, label="PI ratio")
+plt.plot(ratios_nn, label="NN predicted ratio")
+
+plt.xlabel("Step (with predictions)")
+plt.ylabel("Step-size ratio")
+plt.legend()
+plt.show()
+
 
 # Second Order ODE
 # times_pi, sol, ts, errors, sh = run_RK45(VanDerPol,t_span[0], y0v, t_span[1], tol)
@@ -355,36 +394,36 @@ times_nn, sol_nn, ts_nn, ts_ratios_nn, errors_nn, _,_,_,_ = run_RK45_NN(testode2
 # print(rmse)
 # print(rmse_steps)
 
-# Measure Error - Compare the mappings of the controllers
-N_pi = len(times_pi)
-N_nn = len(times_nn)
+# # Measure Error - Compare the mappings of the controllers
+# N_pi = len(times_pi)
+# N_nn = len(times_nn)
 
-print(f"Pi steps: ", N_pi)
-print(f"NN steps: ", N_nn)
+# print(f"Pi steps: ", N_pi)
+# print(f"NN steps: ", N_nn)
 
-# Construct the normalized coordinates
-pi_nvec = (1/(N_pi-1))*np.arange(0,N_pi)
-nn_nvec = (1/(N_nn-1))*np.arange(0,N_nn)
+# # Construct the normalized coordinates
+# pi_nvec = (1/(N_pi-1))*np.arange(0,N_pi)
+# nn_nvec = (1/(N_nn-1))*np.arange(0,N_nn)
 
-# Plot distributions of timesteps
-plt.plot(pi_nvec, times_pi, label="pi")
-plt.plot(nn_nvec, times_nn, label = "nn")
-plt.legend(fontsize=15)
-plt.show()
+# # Plot distributions of timesteps
+# plt.plot(pi_nvec, times_pi, label="pi")
+# plt.plot(nn_nvec, times_nn, label = "nn")
+# plt.legend(fontsize=15)
+# plt.show()
 
-# Compute interpolation of mappings over fine uniform grid
-nxi = 5000
-xi = np.linspace(0,1,nxi)
+# # Compute interpolation of mappings over fine uniform grid
+# nxi = 5000
+# xi = np.linspace(0,1,nxi)
 
-interp_pi = np.interp(xi, pi_nvec, times_pi)
-interp_nn = np.interp(xi, nn_nvec, times_nn)
+# interp_pi = np.interp(xi, pi_nvec, times_pi)
+# interp_nn = np.interp(xi, nn_nvec, times_nn)
 
-err_rms = np.sqrt(np.mean((interp_pi-interp_nn)**2))
-err_rms_norm = err_rms/t_span[1] # across length of time interval
-err_max = np.max(abs(np.diff(interp_pi-interp_nn)))
-print(f"RMS =", err_rms)
-print(f"Normalized RMS = ", err_rms_norm)
-print(f"Max discrepancy = ", err_max)
+# err_rms = np.sqrt(np.mean((interp_pi-interp_nn)**2))
+# err_rms_norm = err_rms/t_span[1] # across length of time interval
+# err_max = np.max(abs(np.diff(interp_pi-interp_nn)))
+# print(f"RMS =", err_rms)
+# print(f"Normalized RMS = ", err_rms_norm)
+# print(f"Max discrepancy = ", err_max)
 
-# Try to split time span into section and compute error over each section
+# # Try to split time span into section and compute error over each section
 
