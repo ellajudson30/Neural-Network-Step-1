@@ -8,32 +8,48 @@ from rk45utils import *
 # ODEs used to generate data
 # ------------------------------------------------------------------
 # Exponential Decay
-lmda = 2  # increase to get more points
-ed_t_span = [0,5]
-ed_y0 = [1] # increase to get more points
-def exp_decay(t,y):
-    return -lmda*y
+lmda = [0.1, 0.5, 1, 2, 5, 10, 50]  # increase to get more points
+ed_t_span = [0,10]
+ed_y0 = [0.5, 1, 1.5, 2, 3] # increase to get more points
+
+expdec_fcns = []
+for l in lmda:
+    def exp_decay(t,y, l=l):
+        return -l*y
+    expdec_fcns.append(exp_decay)
 
 # Logistic
-log_t_span = [0,5]
-log_y0 = [0.125, 0.25, 0.5, 0.75, 2] 
-def logistic(t,y):
-    return y*(1-y)
+R = [0.25,0.5,1,2, 5]
+K = [0.5,1,2]
+log_t_span = [0,10]
+log_y0 = [0.25, 0.5, 0.75, 1.25, 2, 5] 
+
+log_fcns = []
+for r in R:
+    for k in K:
+        def logistic(t,y, r=r, k=k):
+            return r*y*(1-(y/k))
+        log_fcns.append(logistic)
 
 # Multiple Scales
-ms_t_span = [0, 2*math.pi]
+ms_t_span = [0, 6*math.pi]
 ms_y0 = [-2, -1, 0, 0.5, 1, 2]
-def multi_scales(t,y):
-    return -1000*(y-math.cos(t)) - math.sin(t)
+k_vals=[1,1000]
+
+ms_fcns = []
+for k in k_vals:
+    def multi_scales(t,y, k=k):
+        return -k*(y-math.cos(t)) - math.sin(t)
+    ms_fcns.append(multi_scales)
 
 # Oscillatory
-o_t_span = [0, 4*math.pi]
+o_t_span = [0, 6*math.pi]
 o_y0 = [-2, -1, -0.5, 0.5, 1, 2]
 def oscil(t,y):
     return y*math.cos(t)
 
 # Simple Harmonic Motion
-shm_t_span = [0, 4*math.pi]
+shm_t_span = [0, 6*math.pi]
 shm_y0 = [[0.5, 0.0], [1.0, 1.0], [2.0, 0.0], [0.0, 2.0], [3.0, -1.0],]
 def shm(t,Y):
     y,v = Y
@@ -41,12 +57,12 @@ def shm(t,Y):
 
 # VanDerPol
 m = [0.5, 1, 2]
-vdp_t_span = [0, 4*math.pi]
+vdp_t_span = [0, 6*math.pi]
 vdp_y0 = [[0.1, 0.0], [2.0, 0.0], [0.0, 2.0], [1.0, -1.0], [3.0, 0.0]]
 
 VDP_fcns = []
 for val in m:
-    def VanDerPol(t,Y):
+    def VanDerPol(t,Y, val=val):
         y,v = Y
         return [v, val*(1-y**2)*v - y]
     VDP_fcns.append(VanDerPol)
@@ -54,43 +70,77 @@ for val in m:
 # Damped Harmonic Motion
 d_t_span = [0, 6*math.pi]
 d_y0 = [[0.5, 0.0], [1.0, 1.0], [2.0, 0.0], [0.0, 2.0], [3.0, -1.0],]
-def damped_hm(t,Y):
-    y,v= Y
-    return [v, -0.2*v - y]
+d_vals = [0.2,2,3]
+
+d_fcns = []
+for d in d_vals:
+    def damped_hm(t,Y, d=d):
+        y,v= Y
+        return [v, -d*v - y]
+    d_fcns.append(damped_hm)
 
 # ODE that blows up
 bu_t_span = [0,0.95]
-bu_y0 = [0.75, 0.85,0.95, 1]
+bu_y0 = [0.25, 0.75, 0.85,0.95, 1]
 def blows_up(t,y):
     return y**2
+
+# Chirp - frequency increases with time
+chirp_t_span = [0, 10]
+chirp_y0 = [-1, 0, 1]
+
+c_vals = [0.5, 1, 1.75]
+chirp_fcns=[]
+for c in c_vals:
+    def chirp(t, y, c=c):
+        return np.cos(c*(t**2))
+    chirp_fcns.append(chirp)
+
+# Gaussian Pulse - constant other than a rapid pulse at 2.5
+pulse_t_span = [0, 5]
+pulse_y0 = [0]
+
+def pulse(t, y):
+    return 10*np.exp(-100*(t-2.5)**2)
 
 # Lorenz - standard parameters
 sigma = 10
 r_vals = [28, 317]
 b = 8/3
-L_t_span = [0,5]
-L_y0 = [[0.0, 1.0, 20.0], [1.0, 1.0, 1.0]]
+L_t_span = [0,10]
+L_y0 = [[0.0, 1.0, 20.0], [1.0, 1.0, 1.0], [0.5,0,0]]
 L_fcns = []
 for r in r_vals:
-    def Lorenz(t,Y):
+    def Lorenz(t,Y, r=r):
         x,y,z = Y
         return [sigma*(y-x), r*x-y-x*z, x*y-b*z]
     L_fcns.append(Lorenz)
+
 
 # Functions for Data Generating
 #---------------------------------------------------------------------
 
 # Function to choose data points uniformly for exp_decay
-def select_points_exp(sol):
+def select_points_exp(sol, num_hist=4):
     """Given a skeleton of a solution, select every 6th point for the dataset. 
     Return the indices of selected points"""
 
-    indices = []
     n = len(sol)
-    index = math.floor(n/6) 
+
+    # Not enough history to build a feature
+    min_index = num_hist + 2
+    if n <= min_index + 1 :
+        return []
+
+    indices = []
+    
+    index = max(1, math.floor(n / 6))
     j = 1
     while j*index < n:
-        indices.append(j*index)
+        idx = j*index
+
+        if idx >= min_index:
+            indices.append(j*index)
         j += 1
 
     return indices
@@ -125,7 +175,7 @@ def build_features(indices, solution, time_steps, stage_history):
         next_step_ratio.append(r_next)
 
     return data_list, next_step_ratio
-def build_features_solhist(indices, solution, time_steps, num_hist, tol):
+def build_features_solhist(indices, times, solution, full_solution, time_steps, num_hist, tol, fcn, sol_component):
     """ Builds a feature vector containing solution and ratio history and log(tol).
     Feature vector is of length: (num_hist + 1)*2 +1
     I.e. : num_hist = 2, index i
@@ -138,33 +188,42 @@ def build_features_solhist(indices, solution, time_steps, num_hist, tol):
     for i in indices:
 
         # Check if index is at the end of the time span
-        if i == len(solution)-1:
+        if i + 1 >= len(time_steps):
             pass
         # Check if not enough solution history
-        elif i < num_hist:
+        elif i < num_hist + 2:
             print("not enough solution history at this point")
         else:
+            # Add Solution History
             feature = []
             for k in range(num_hist, -1, -1):
-                feature.append(solution[i-k])
+                feature.append(float(solution[i-k]))
 
+            # Add ratio history
             for j in range(num_hist, -1, -1):
-                r = time_steps[i-j]/time_steps[i-j-1]
+                r = time_steps[i-j-1]/time_steps[i-j-2]
                 feature.append(r)
+
+            # Add derivative history
+            for l in range(num_hist,-1,-1):
+                deriv = fcn(times[i-l], full_solution[i-l])
+                deriv = np.asarray(deriv).reshape(-1)[sol_component]
+                # deriv = deriv[sol_comp]
+                feature.append(float(deriv))
 
             feature.append(np.log(tol))
 
             data_list.append(feature)
 
             # Create vector of next time steps
-            r_next = time_steps[i+1]/time_steps[i]
+            r_next = time_steps[i]/time_steps[i-1]
             next_step_ratio.append(r_next)
 
 
     return data_list, next_step_ratio
 
 # Function to generate data matrix and target ratios
-def generate_data(fcn, t0, y0, tf, tol, ord):
+def generate_data(fcn, t0, y0, tf, tol, ord, selection_method = 'deriv'):
     """Generate a dataset and target ratio vector from the passed parameters.
     - Works for 1st and 2nd order ODEs. 
     - 2nd order must be written as a system of 1st order ODEs. Only the solution information 
@@ -187,11 +246,14 @@ def generate_data(fcn, t0, y0, tf, tol, ord):
     for i in y0:
         for j in tol:
             if ord ==1:
-                times, sol, ts, err, sh = run_RK45(fcn, t0, [i], tf, j)
+                times, sol, ts,_,_,_,_,_,_ = run_RK45(fcn, t0, [i], tf, j)
             else:
-                times, sol, ts, err, sh = run_RK45(fcn, t0, i, tf, j)
-            
-            
+                times, sol, ts,_,_,_,_,_,_ = run_RK45(fcn, t0, i, tf, j)
+
+            # Keep full solution for feature generation
+            full_sol = sol.copy()
+
+            # Choose compnent of solution with the most variation
             sol_comps = []
             for k in range(0,len(sol[0])):
                 sol_comps.append(np.array(sol[:,k]))
@@ -200,14 +262,13 @@ def generate_data(fcn, t0, y0, tf, tol, ord):
             max_var = np.argmax(diffs)
             sol = sol[:,max_var]
 
-            # sol = sol[:,0] # change this line
-             
+            # Approximate derivatives to select points on solution curves 
             yp = approx_first_deriv2(sol, times)
             yp2 = approx_second_deriv2(sol, times)
 
             # Select desired points
-            if fcn == exp_decay:
-                indices = select_points_exp(sol)
+            if selection_method == 'uniform':
+                indices = select_points_exp(sol,num_hist=4)
             
             else:
                 I = []
@@ -255,8 +316,14 @@ def generate_data(fcn, t0, y0, tf, tol, ord):
                 indices = np.unique(I)
 
             # Create features/ratios and add to Dataset
-            data, ratios = build_features_solhist(indices, sol, ts, 4, j)
+            data, ratios = build_features_solhist(indices, times, sol, full_sol, ts, 4, j, fcn, max_var)
             # data, ratios = build_features(indices, sol, ts, sh)
+
+            # print(
+            #     "steps =", len(ts),
+            #     "selected =", len(data),
+            #     "tol =", j
+            # )
 
             Data_set.extend(data)
             Step_ratios.extend(ratios)
@@ -272,36 +339,44 @@ Data_set = []
 Ratios = []
 
 # 1. Exp Decay
-Data_exp, Sr_exp = generate_data(exp_decay, ed_t_span[0], ed_y0, ed_t_span[1], [1e-3, 1e-6, 1e-8, 1e-10, 1e-12],1)
-print("Examples generated with Exp Decay: ", len(Data_exp))
-Data_set.extend(Data_exp)
-Ratios.extend(Sr_exp)
-print("Examples generated with Exp Decay: ", len(Data_exp))
+Total_ex=0
+for f in expdec_fcns:
+    Data_exp, Sr_exp = generate_data(f, ed_t_span[0], ed_y0, ed_t_span[1], [1e-3,1e-4, 1e-6, 1e-8, 1e-10],1, selection_method='uniform')
+    Data_set.extend(Data_exp)
+    Ratios.extend(Sr_exp)
+    Total_ex += len(Data_exp)
+print("Examples generated with Exp Decay: ", Total_ex)
 print("Total examples: ", len(Data_set))
 
 #2. Logistic
-Data_log, Sr_log = generate_data(logistic, log_t_span[0], log_y0, log_t_span[1], [1e-3, 1e-6, 1e-8, 1e-10, 1e-12],1)
-Data_set.extend(Data_log)
-Ratios.extend(Sr_log)
-print("Examples generated with Logistic: ", len(Data_log))
+Total_ex = 0
+for f in log_fcns:
+    Data_log, Sr_log = generate_data(f, log_t_span[0], log_y0, log_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],1)
+    Data_set.extend(Data_log)
+    Ratios.extend(Sr_log)
+    Total_ex += len(Data_log)
+print("Examples generated with Logistic: ", Total_ex)
 print("Total examples: ", len(Data_set))
 
 #3. Multiple Scales 
-Data_ms, Sr_ms = generate_data(multi_scales, ms_t_span[0], ms_y0, ms_t_span[1], [1e-3, 1e-6, 1e-8, 1e-10, 1e-12],1)
-Data_set.extend(Data_ms)
-Ratios.extend(Sr_ms)
-print("Examples generated with Multiple Scales: ", len(Data_ms))
+Total_ex = 0
+for f in ms_fcns:
+    Data_ms, Sr_ms = generate_data(f, ms_t_span[0], ms_y0, ms_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],1)
+    Data_set.extend(Data_ms)
+    Ratios.extend(Sr_ms)
+    Total_ex +=len(Data_ms)
+print("Examples generated with Multiple Scales: ", Total_ex)
 print("Total examples: ", len(Data_set))
 
 #4. Oscillating
-Data_o, Sr_o = generate_data(oscil, o_t_span[0], o_y0, o_t_span[1], [1e-6, 1e-8, 1e-10, 1e-12],1)
+Data_o, Sr_o = generate_data(oscil, o_t_span[0], o_y0, o_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],1)
 Data_set.extend(Data_o)
 Ratios.extend(Sr_o)
 print("Examples generated with Oscillating: ", len(Data_o))
 print("Total examples: ", len(Data_set))
 
 #5. Simple Harmonic Motion 
-Data_shm, Sr_shm = generate_data(shm, shm_t_span[0], shm_y0, shm_t_span[1], [1e-3, 1e-6, 1e-8, 1e-10], 2)
+Data_shm, Sr_shm = generate_data(shm, shm_t_span[0], shm_y0, shm_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10], 2)
 Data_set.extend(Data_shm)
 Ratios.extend(Sr_shm)
 print("Examples generated with SHM : ", len(Data_shm))
@@ -310,7 +385,7 @@ print("Total examples: ", len(Data_set))
 #6. VanDerPol
 Total_ex = 0
 for f in VDP_fcns:
-    Data_vdp, Sr_vdp = generate_data(f, vdp_t_span[0], vdp_y0, vdp_t_span[1], [1e-3, 1e-6, 1e-8, 1e-10], 2)
+    Data_vdp, Sr_vdp = generate_data(f, vdp_t_span[0], vdp_y0, vdp_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10], 2)
     Data_set.extend(Data_vdp)
     Ratios.extend(Sr_vdp)
     Total_ex += len(Data_vdp)
@@ -318,14 +393,17 @@ print("Examples generated with VanDerPol: ", Total_ex)
 print("Total examples: ", len(Data_set))
 
 #7. Damped Harmonic Motion
-Data_d, Sr_d = generate_data(damped_hm, d_t_span[0], d_y0, d_t_span[1], [1e-3, 1e-6, 1e-8, 1e-10], 2)
-Data_set.extend(Data_d)
-Ratios.extend(Sr_d)
-print("Examples generated with Damped HM : ", len(Data_d))
+Total_ex=0
+for f in d_fcns:
+    Data_d, Sr_d = generate_data(f, d_t_span[0], d_y0, d_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10], 2)
+    Data_set.extend(Data_d)
+    Ratios.extend(Sr_d)
+    Total_ex += len(Data_d)
+print("Examples generated with Damped HM : ", Total_ex)
 print("Total examples: ", len(Data_set))
 
 #8. ODE that Blows up 
-Data_bu, Sr_bu = generate_data(blows_up, bu_t_span[0], bu_y0, bu_t_span[1], [1e-6, 1e-8, 1e-10, 1e-12],1)
+Data_bu, Sr_bu = generate_data(blows_up, bu_t_span[0], bu_y0, bu_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],1)
 Data_set.extend(Data_bu)
 Ratios.extend(Sr_bu)
 print("Examples generated with y' = y**2: ", len(Data_bu))
@@ -341,23 +419,48 @@ print("Total examples: ", len(Data_set))
 #9. Lorenz
 Total_ex = 0
 for f in L_fcns:
-    Data_L, Sr_L = generate_data(f, L_t_span[0], L_y0, L_t_span[1], [1e-3, 1e-6, 1e-8, 1e-10], 3)
+    Data_L, Sr_L = generate_data(f, L_t_span[0], L_y0, L_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10], 3)
     Data_set.extend(Data_L)
     Ratios.extend(Sr_L)
     Total_ex += len(Data_L)
 print("Examples generated with Lorenz: ", Total_ex)
 print("Total examples: ", len(Data_set))
 
+#10. Chirp
+Total_ex=0
+for f in chirp_fcns:
+    Data_cp, Sr_cp = generate_data(f, chirp_t_span[0], chirp_y0, chirp_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],1)
+    Data_set.extend(Data_cp)
+    Ratios.extend(Sr_cp)
+    Total_ex += len(Data_cp)
+print("Examples generated with chirp: ", Total_ex)
+print("Total examples: ", len(Data_set))
+
+#11. Gaussian Pulse
+Data_p, Sr_p = generate_data(pulse, pulse_t_span[0], pulse_y0, pulse_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],1)
+Data_set.extend(Data_p)
+Ratios.extend(Sr_p)
+print("Examples generated with pulse: ", len(Data_p))
+print("Total examples: ", len(Data_set))
+
 
 print(f"Size of Data Matrix: {len(Data_set)}x{len(Data_set[0])}" )
 
+x = np.arange(len(Ratios))
+y = np.array(Ratios)
+ones = np.ones(len(Ratios))
+
+plt.plot(x, y, 'o')
+plt.plot(ones)
+plt.show()
+
 # Store Dataset as a csv file
 #----------------------------------------------------------------------------
-with open("features2.csv", mode="w", newline="", encoding="utf-8") as file:
+with open("features5.csv", mode="w", newline="", encoding="utf-8") as file:
     writer = csv.writer(file)
     writer.writerows(Data_set)
 
-with open("ratios2.csv", mode="w", newline="", encoding="utf-8") as file:
+with open("ratios5.csv", mode="w", newline="", encoding="utf-8") as file:
     writer = csv.writer(file)
     writer.writerows([[r] for r in Ratios])
 
