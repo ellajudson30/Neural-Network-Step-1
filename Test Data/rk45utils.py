@@ -112,18 +112,22 @@ def run_RK45(fcn, t0, y0, tf, tol):
     solution = []
     time_steps = []
     errors = []
-    # stage_history = []
+
+    times.append(float(solver.t))
+    solution.append(solver.y.copy())
 
     while solver.t < tf:
-        solution.append(solver.y.copy())
-        times.append(float(solver.t))
+        # solution.append(solver.y.copy())
+        # times.append(float(solver.t))
         
         t_old = solver.t
         
         solver.step()
         h = solver.t - t_old
         time_steps.append(float(h))
-        # stage_history.append(solver.K.copy())
+
+        solution.append(solver.y.copy())
+        times.append(float(solver.t))
 
         # scale = solver.atol + solver.rtol * np.maximum(np.abs(solver.y_old), 
         #                                             np.abs(solver.y))
@@ -150,30 +154,35 @@ def run_RK45(fcn, t0, y0, tf, tol):
         np.array(rejected_errors),
         solver.accepted_steps,
         solver.rejected_steps,
-        np.array(solver.rejections_per_step))
+        np.array(solver.rejections_per_step)
+        )
 
-# Approximate derviatives
-def approx_first_deriv2(sol, times):
+# Approximate derviatives 
+def compute_first_deriv(fcn, sol, times):
     """Given a sketelon of a solution, use a finite difference stencil on a 
     non-uniform grid to approximate the first derivative
     sol - skeleton of solution
     times - points where skeleton is (can use to get see timesteps taken) """
     
-    y_prime = np.zeros(len(times) -2 )
+    times = np.asarray(times)
+    sol = np.asarray(sol)
 
-    y_prime = (np.array(sol[2:]) - np.array(sol[:-2]))/(np.array(times[2:])
-                                                     - np.array(times[:-2]))
+    y_prime = np.array([
+        np.atleast_1d(fcn(t, y))
+        for t, y in zip(times, sol)
+    ])
+    
     return y_prime
-def approx_second_deriv2(sol, times):
+def approx_second_deriv(sol, times):
     """Given a sketelon of a solution, use a finite difference stencil on a 
     non-uniform grid to approximate the second derivative 
     sol - skeleton of solution
     times - points where skeleton is (can use to get see timesteps taken) """
 
-    y_2prime = np.zeros(len(times) -2 )
+    # y_2prime = np.zeros(len(times) -2 )
 
     times = np.array(times)
-    sol = np.array(sol)
+    sol = np.array(sol).squeeze()
     
     h_left = times[1:-1] - times[:-2]
     h_right = times[2:] - times[1:-1]
