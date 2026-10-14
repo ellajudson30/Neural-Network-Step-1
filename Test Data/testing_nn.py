@@ -9,17 +9,19 @@ import matplotlib.pyplot as plt
 from rk45utils import *
 import time
 
-# Test trained NN 
+# Import trained NN 
 #-----------------------------------------------------------------------
 class NN(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(11,48),
+            nn.Linear(16,64),
             nn.Tanh(), 
-            nn.Linear(48,48),
+            nn.Linear(64,64),
             nn.Tanh(),
-            nn.Linear(48,1)
+            nn.Linear(64,32),
+            nn.Tanh(),
+            nn.Linear(32,1)
         ) 
     
     def forward(self, x):
@@ -30,34 +32,37 @@ model = NN()
 model.load_state_dict(torch.load('model_weights_s1.pth'))
 model.eval()
 
+# Load standardization variables
+stats = np.load('standardization_NN3.npz')
+train_mean = stats['mean']
+train_std = stats['std']
+
 # Test trained NN 
 #-----------------------------------------------------------------------
 
 # Define test ODES
+# 1st Order
 def testode1(t,y):
     return -2*y  - 50*(y-math.cos(t)) - math.sin(t)
-y0 = [1]
-t_span = [0,5]
-tol = 1e-10
 
 def testode2(t,y): 
-    return y*math.cos(t)
-
+    return y*math.cos(t) -0.5*y
+k=3
 def testode3(t,y):
-    return y*(1-y)
+    return k*y*(1-y)
 
 def testode4(t,y):
-    return -y
+    return -0.5*y
 
 def testode5(t,y):
     return y**2
 
+# 2nd Order
 def testode_damped(t,Y):
     y,v= Y
     return [v, -0.2*v - y]
  
-m = 3
-y0v = [2.0,0.0]
+m = 2
 def VanDerPol(t,Y):
     y,v = Y
     return [v, m*(1-y**2)*v - y]
@@ -66,6 +71,7 @@ def shm(t,Y):
     y,v = Y
     return [v,-y]
 
+# 3rd Order 
 sigma = 10
 r = 28
 b = 8/3
@@ -87,10 +93,12 @@ def Rossler(t,Y):
     return [-y-z, x + A*y, B+z*(x-C)]
 
 
-# Function to run RK45 with NN choosing the next step
+# Function to run RK45 and make NN predictions at each step
 #------------------------------------------------------------------------------- 
 def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
-    """Takes an RK45 step and uses the prediction from the trained NN as the next step.
+    """Runs the RK45 solver and computes a NN at each step.
+    PI controller outputs are not touched, we just compare the timestep choice of 
+    each controller at the same point.
     """
     
     solver = RK45_counting(fcn,t0, y0, tf, rtol=tol, atol=tol)
@@ -104,8 +112,6 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
     errors = []
     nn_proposed_steps = []
     nn_proposed_ratios = []
-    # nn_proposed_times = []
-    # nn_proposed_times.append(t0)
 
     while solver.t < tf:
 
@@ -115,7 +121,7 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
         prediction_made = False
         
         # Check if we have enough history 
-        if len(time_steps) > numhist + 3: 
+        if len(time_steps) >= numhist + 3: 
 
             # Construct feature vector to pass to NN
             feature = []
@@ -126,25 +132,34 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
             for j in range(numhist, -1,-1):
                 ratio = time_steps[-1-j]/time_steps[-2-j]
                 feature.append(ratio)
+
+            for k in range(numhist, -1, -1):
+
+                # Evaluate RHS
+                deriv = fcn(times[-1-k], solution[-1-k])
+
+                # Make sure derivative is an array
+                deriv = np.asarray(deriv).reshape(-1)
+
+                # Take derivative of first solution component
+                feature.append(float(deriv[0]))
             
             feature.append(float(np.log(tol)))
 
-            # Predict next step with NN
+            # print("feature length:", len(feature))
+            #print(feature)
+
+            # Standardize feature
+            feature = np.array(feature).reshape(1, -1)
+            feature = (feature - train_mean) / train_std
+
+            # Make NN prediction
             feat_ten = torch.tensor(feature, dtype=torch.float32)
             with torch.no_grad():
-                r_nn = model(feat_ten.unsqueeze(0)).item()
-                # print(r_new)
-
-            # # Prevent pathological NN predictions
-            # r_new = np.clip(r_new, 0.2, 3.0)
-            # print(r_new)
+                r_nn = model(feat_ten).item()
 
             h_nn = time_steps[-1]*r_nn
             
-            # Alter pi controller
-            # solver.h_abs = solver.h_abs * r_new
-
-
             prediction_made = True
         
         # Take RK step 
@@ -153,9 +168,11 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
         h_pi = solver.t - t_old
 
         if prediction_made:
+            # Store nn predictions 
             nn_proposed_steps.append(h_nn) 
             nn_proposed_ratios.append(r_nn)
 
+            # Compute pi ratios to compare with nn
             r_pi = h_pi/time_steps[-1]
             ratios.append(r_pi)   
         time_steps.append(float(h_pi))
@@ -166,14 +183,6 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
         # err = solver._estimate_error_norm(solver.K, h, scale)
 
         # errors.append(float(err))
-    
-    # fix how this is computed to match when predictions are being made
-    # Compute ratios
-    # pi_ratios = []
-    # for i in range(1, len(time_steps)):
-    #     ratio = time_steps[i]/time_steps[i-1]
-    #     pi_ratios.append(ratio)
-
     errors = solver.error_norms
 
     return (
@@ -350,51 +359,80 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
                 r_new = model(feat_ten.unsqueeze(0)).item()
     return 
 
-# Test performance of NN predictions
+
+# Compare NN predictions to PI outputs
 #--------------------------------------------------------------------------------
 
-# First order ODE
-times_pi, sol, ts, ratios_pi, errors, _, _, _, _ = run_RK45(testode2,t_span[0], y0, t_span[1], tol)
-# times_nn, sol_nn, ts_nn, errors_nn, prop_steps_nn, prop_ratios, rejected_errors_nn, acc_steps, rej_steps = run_RK45_NN(testode3,
-#                                                                     t_span[0], y0, t_span[1], tol, model, 4)
+# Parameters (not for 3rd order)
+y0 = [1.5]
+# y0v = [2.0,0.0] 
+t_span = [0,20]
+# tols = [1e-4, 1e-5, 1e-6, 1e-8]
+tols = [1e-6]
 
-times_nn, sol_nn, ts_nn, ratios_pi_comp, errors_nn, _,rej_steps, prop_steps, ratios_nn, _ = run_RK45_NN(testode2,t_span[0], y0, t_span[1], tol, model, 4)
+# Run testing - see if nn prediction replicate those of pi 
+#----------------------------------------------------------------------------------------------------------
+for t in tols:                                                  
+    # Testing a 1st order ODE
+    times_pi, sol_pi, ts_pi, ratios_pi_comp, errors_pi, _,_, ts_nn, ratios_nn, _ = run_RK45_NN(testode4,
+                                                    t_span[0], y0, t_span[1], t, model, 4)
+    
+    # Metrics for evaluating 
+    
+    # RMSE between PI and NN ratios
+    err_rms_rat = np.sqrt(np.mean((ratios_pi_comp[:-1]-ratios_nn[:-1])**2))
+    print(f"Tol : {t}")
+    print(f"RMSE : {err_rms_rat}")
 
-plt.plot(errors)
-plt.show()
+    # Wrong Behaviour
+    wrong_behav = []
+    wrong_magnitudes = []
+    under_pred = 0
+    over_pred = 0
+    for i in range(len(ratios_nn)):
+        r1 = ratios_nn[i]
+        r2 = ratios_pi_comp[i]
+        if (r1-1)*(r2-1) < 0:
+            wrong_behav.append(i)
+            wrong_magnitudes.append(abs(r1-r2))
+            if r1 < 1:
+                under_pred += 1
+            else:
+                over_pred += 1
+    wrong_magnitudes = np.array(wrong_magnitudes)
+    wrong_behav_pct = len(wrong_magnitudes[wrong_magnitudes>0.2])/len(ratios_nn)
+    print(f"Wrong behaviour % : {wrong_behav_pct}")
 
-print(len(ratios_nn))
-print(len(ratios_pi_comp))
-print(ratios_nn-ratios_pi_comp)
-err_rms_rat = np.sqrt(np.mean((ratios_pi_comp[:-1]-ratios_nn[:-1])**2))
-print(err_rms_rat)
+    # Relative Error 
+    rel_err = abs((ratios_pi_comp[:-1]-ratios_nn[:-1]))/abs(ratios_pi_comp[:-1])
+    av_rel_err = np.mean(rel_err)
+    print(f"Average Rel Error : {av_rel_err}")
+    print("--------------------------------------------------------------")
 
-plt.plot(ratios_pi_comp, label="PI ratio")
-plt.plot(ratios_nn, label="NN predicted ratio")
+# Second Order ODE
+# times_pi, sol, ts, errors, sh = run_RK45(VanDerPol,t_span[0], y0v, t_span[1], tol)
+# times_nn, sol_nn, ts_nn, ratios_pi_comp, errors_nn, _,rej_steps, prop_steps, ratios_nn, _ = run_RK45_NN(VanDerPol,t_span[0], y0v, t_span[1], tol, model, 4)
 
-plt.xlabel("Step (with predictions)")
+# Plot the pi and nn ratios
+plt.plot(ratios_pi_comp[:-1],label="PI ratio")
+plt.plot(ratios_nn[:-1], label="NN predicted ratio")
+
+plt.xlabel("Step")
 plt.ylabel("Step-size ratio")
 plt.legend()
 plt.show()
 
-
 # Second Order ODE
 # times_pi, sol, ts, errors, sh = run_RK45(VanDerPol,t_span[0], y0v, t_span[1], tol)
-# times_nn, sol, ts, errors, sh = run_RK45_NN(VanDerPol,t_span[0], y0v, t_span[1], tol, model, 4)
+# times_nn, sol_nn, ts_nn, ratios_pi_comp, errors_nn, _,rej_steps, prop_steps, ratios_nn, _ = run_RK45_NN(VanDerPol,t_span[0], y0v, t_span[1], tol, model, 4)
 
 # Lorenz/Rossler
 # times_pi, sol, ts, errors, sh = run_RK45(Lorenz,L_t_span[0], L_y0, L_t_span[1], tol_L)
 # times_nn, sol, ts, errors, sh = run_RK45_NN(Lorenz,L_t_span[0], L_y0, L_t_span[1], tol_L, model, 4)
 
-# Measure error - rmse of predicted time steps (not very comparable) 
-# predicted = np.array(ts_nn[5:100])
-# actual = np.array(ts[5:100])
-# rmse = np.sqrt(np.mean((predicted-actual)**2))
-# rmse_steps = np.sqrt(np.mean((predicted-np.array(nn_steps)[5:100])**2))
-# print(rmse)
-# print(rmse_steps)
-
-# # Measure Error - Compare the mappings of the controllers
+# NEEDS TO BE UPDATED FOR NEW FUNCTION
+# # Measure Error - normalized time mappings of controllers
+# #-------------------------------------------------------------
 # N_pi = len(times_pi)
 # N_nn = len(times_nn)
 
@@ -425,5 +463,4 @@ plt.show()
 # print(f"Normalized RMS = ", err_rms_norm)
 # print(f"Max discrepancy = ", err_max)
 
-# # Try to split time span into section and compute error over each section
 
