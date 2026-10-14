@@ -14,11 +14,13 @@ class NN(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(11,48),
+            nn.Linear(16,64),
             nn.Tanh(), 
-            nn.Linear(48,48),
+            nn.Linear(64,64),
             nn.Tanh(),
-            nn.Linear(48,1)
+            nn.Linear(64,32),
+            nn.Tanh(),
+            nn.Linear(32,1)
         ) 
     
     def forward(self, x):
@@ -29,6 +31,13 @@ model = NN()
 model.load_state_dict(torch.load('model_weights_s1.pth'))
 model.eval()
 
+# Load standardization variables
+stats = np.load('standardization_NN3.npz')
+train_mean = stats['mean']
+train_std = stats['std']
+
+# Functions to Implement NN solver
+#------------------------------------------------------------------------
 def take_RK45_step(solver, fcn, times, solution, tf, tol, h):
 
     # solver = RK45_counting(fcn,t0, y0, tf, rtol=tol, atol=tol)
@@ -53,7 +62,7 @@ def run_solverNN(fcn, t0, y0, tf, tol, model, numhist):
     times = []
     solution = []
     time_steps = []
-    ratios = []
+    nn_ratios = []
     # errors = []
     # nn_proposed_steps = []
     # nn_proposed_ratios = []
@@ -63,9 +72,8 @@ def run_solverNN(fcn, t0, y0, tf, tol, model, numhist):
     solution.append(y)
 
     while t < tf:
-
+        # If not enough history run PI controller
         if len(times) <= numhist + 3:
-            print("1")
             t_old = solver.t
             solver.step()
             h_pi = solver.t - t_old
@@ -77,7 +85,6 @@ def run_solverNN(fcn, t0, y0, tf, tol, model, numhist):
             t = solver.t
 
         else:
-            print("2")
             # Construct feature vector to pass to NN
             feature = []
 
@@ -87,13 +94,28 @@ def run_solverNN(fcn, t0, y0, tf, tol, model, numhist):
             for j in range(numhist, -1,-1):
                 ratio = time_steps[-1-j]/time_steps[-2-j]
                 feature.append(ratio)
+            for k in range(numhist, -1, -1):
+            
+                # Evaluate RHS
+                deriv = fcn(times[-1-k], solution[-1-k])
+            
+                # Make sure derivative is an array
+                deriv = np.asarray(deriv).reshape(-1)
+            
+                # Take derivative of first solution component
+                feature.append(float(deriv[0]))
             
             feature.append(float(np.log(tol)))
 
+            # Standardize feature
+            feature = np.array(feature).reshape(1, -1)
+            feature = (feature - train_mean) / train_std
+            
             # Predict next step with NN
             feat_ten = torch.tensor(feature, dtype=torch.float32)
             with torch.no_grad():
-                r_nn = model(feat_ten.unsqueeze(0)).item()
+                r_nn = model(feat_ten).item()
+                nn_ratios.append(r_nn)
 
             h_nn = time_steps[-1]*r_nn
 
@@ -112,17 +134,36 @@ def run_solverNN(fcn, t0, y0, tf, tol, model, numhist):
         np.array(times), 
         np.array(solution), 
         np.array(time_steps), 
-        np.array(ratios)
+        np.array(nn_ratios)
     )
 
+# Testing
+#------------------------------------------------------------------------
+
+# 1st Order
 def testode(t,y):
-    return -0.5*y + y*(1-y)
+    return -5*y
 
 def testode2(t,y):
     return y*math.cos(t)
-y0 = [1.1]
-t_span = [0,5]
-tol = 1e-3
+
+def testode3(t,y):
+    return y*(1-y)
+
+# 2nd Order
+m = 2
+def testode4(t,Y):
+    y,v = Y
+    return [v, m*(1-y**2)*v - y]
+
+def LV(t,Y):
+    x,y = Y
+    return [x*(1-0.2*y), y*(-0.2+0.5*x)]
+
+#-----------------------------------------------------------------------------------------
+y0 = [1.5]
+# y0 = [2.0, 0.0]
+t_span = [0,20]
 
 # times_nn, sol_nn, ts_nn, rat_nn = run_solverNN(testode, t_span[0], y0, t_span[1], tol, model, 4)
 # times, sol, ts, rat, _,_,_,_,_ = run_RK45(testode, t_span[0], y0, t_span[1], tol)
@@ -138,21 +179,45 @@ tol = 1e-3
 
 # Compute Error metric
 #----------------------------------------------
+# Compute Exact solution for logistic : y(1-y)
+def log_exact_sol(t, y0):
+    return y0[0]/(y0[0] + (1-y0[0])*np.exp(-t))
+
+y0 = [0.25]
+# y0 = [2.0, 0.0]
+t_span = [0,20]
+t_vals = np.linspace(0,20,50)
+log_exact = log_exact_sol(t_vals, y0)
+# print(log_exact)
+
 # Find 'exact' solution with PI
 exact_tol = 1e-13
 
-times_ex, sol_ex, ts_ex,_,_,_,_,_,_ = run_RK45(testode, t_span[0], y0, t_span[1], exact_tol)
+times_ex, sol_ex, ts_ex,_,_,_,_,_,_ = run_RK45(testode2, t_span[0], y0, t_span[1], exact_tol)
 # print(f"exact steps : ", len(ts_ex))
 
 # Run NN and PI for looser tol
-test_tol = 1e-5
-times_nn, sol_nn, ts_nn, rat_nn = run_solverNN(testode, t_span[0], y0, t_span[1], test_tol, model, 4)
-times, sol, ts, rat, _,_,_,_,_ = run_RK45(testode, t_span[0], y0, t_span[1], test_tol)
+test_tol = 1e-6
+times_nn, sol_nn, ts_nn, rat_nn = run_solverNN(testode2, t_span[0], y0, t_span[1], test_tol, model, 4)
+times, sol, ts, rat, _,_,_,_,_ = run_RK45(testode2, t_span[0], y0, t_span[1], test_tol)
 
-print(f" ts steps pi :", ts)
-print(f"ts steps nn :", ts_nn)
+ratios_pi = ts[1:-1] / ts[:-2]
+ratios_nn = ts_nn[1:-1] / ts_nn[:-2]
 
-# Compute error from exact
+print(ratios_pi)
+print(ratios_nn)
+
+
+# Plot Solution Curves - exact logistic solution
+# plt.figure()
+# plt.plot(t_vals, log_exact, label='Exact Sol')
+# # plt.plot(times_ex, sol_ex, label='Exact Sol (PI)')
+# plt.plot(times_nn, sol_nn, label='NN Sol')
+# plt.plot(times, sol, label='PI Sol')
+# plt.legend()
+# plt.show()
+
+# Compute Error from Exact Run(PI)
 # do interpolation of mappings to compare 
 N_ex = len(times_ex)
 N_pi = len(times)
@@ -185,14 +250,15 @@ interp_nn = np.interp(xi, nn_nvec, times_nn)
 
 err_rms_pi = np.sqrt(np.mean((interp_pi-interp_ex)**2))
 err_rms_nn = np.sqrt(np.mean((interp_nn-interp_ex)**2))
-# err_rms_norm = err_rms/t_span[1] # across length of time interval
-# err_max = np.max(abs(np.diff(interp_pi-interp_nn)))
+
 print(f"RMS PI =", err_rms_pi)
 print(f"RMS NN =", err_rms_nn)
-# print(f"Normalized RMS = ", err_rms_norm)
-# print(f"Max discrepancy = ", err_max)
+
 err_pi = abs(interp_pi-interp_ex)
 err_nn = abs(interp_nn-interp_ex)
+
+err_nntopi = np.sqrt(np.mean((interp_pi-interp_nn)**2))
+print(f"RMSE from nn to pi : {err_nntopi}")
 
 # plt.figure(2)
 # plt.plot(err_pi, label="pi")
