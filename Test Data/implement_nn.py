@@ -53,7 +53,11 @@ def take_RK45_step(solver, fcn, times, solution, tf, tol, h):
                                    solver.C, K_trial)
     return y_new
 
-def run_solverNN(fcn, t0, y0, tf, tol, model, numhist):
+def run_solverNN(fcn, t0, y0, tf, tol, model, numhist, sol_component=None):
+    """sol_component - solution component used in features. Defaults to the one with
+    the largest range, as in generate_data."""
+    if sol_component is None:
+        sol_component = most_varying_component(fcn, t0, y0, tf, tol)
 
     solver = RK45_counting(fcn,t0, y0, tf, rtol=tol, atol=tol)
     model.eval()
@@ -89,7 +93,7 @@ def run_solverNN(fcn, t0, y0, tf, tol, model, numhist):
             feature = []
 
             for i in range(numhist,-1,-1):
-                feature.append(float(solution[-1-i][0]))  
+                feature.append(float(solution[-1-i][sol_component]))  
             
             for j in range(numhist, -1,-1):
                 ratio = time_steps[-1-j]/time_steps[-2-j]
@@ -102,8 +106,8 @@ def run_solverNN(fcn, t0, y0, tf, tol, model, numhist):
                 # Make sure derivative is an array
                 deriv = np.asarray(deriv).reshape(-1)
             
-                # Take derivative of first solution component
-                feature.append(float(deriv[0]))
+                # Take derivative of the same solution component
+                feature.append(float(deriv[sol_component]))
             
             feature.append(float(np.log(tol)))
 

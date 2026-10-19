@@ -157,7 +157,14 @@ def run_RK45(fcn, t0, y0, tf, tol):
         np.array(solver.rejections_per_step)
         )
 
-# Approximate derviatives 
+# Choose the solution component used in feature vectors
+def most_varying_component(fcn, t0, y0, tf, tol):
+    """Run the PI solver and return the index of the solution component with the
+    largest range. Training data uses this component, so testing must use it too."""
+    _, sol, *_ = run_RK45(fcn, t0, y0, tf, tol)
+    return int(np.argmax(np.ptp(sol, axis=0)))
+
+# Approximate derviatives
 def compute_first_deriv(fcn, sol, times):
     """Given a sketelon of a solution, use a finite difference stencil on a 
     non-uniform grid to approximate the first derivative

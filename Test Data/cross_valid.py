@@ -104,14 +104,14 @@ class NN3(nn.Module):
 #-------------------------------------------------------------------------
 
 # Open CSV file
-with open('features5.csv', mode='r', newline='', encoding='utf-8') as file:
+with open('features_fullmeta1.csv', mode='r', newline='', encoding='utf-8') as file:
     # Create a reader object
     csv_reader = csv.reader(file)
     
     # Convert the reader object directly into a list
     Data_set = [[float(x) for x in row] for row in csv_reader]
 
-with open('ratios5.csv', mode='r', newline='', encoding='utf-8') as file:
+with open('ratios_fullmeta1.csv', mode='r', newline='', encoding='utf-8') as file:
     # Create a reader object
     csv_reader = csv.reader(file)
     
@@ -439,6 +439,7 @@ plt.show()
 # # print(norm_err)
 # # print(test_losses)
 
-# # Save weights
-# torch.save(model.state_dict(), 'model_weights_s1.pth')
-# print("Model weights saved successfully!")
+# Save weights and the standardization used to train them (loaded together in testing)
+torch.save(model.state_dict(), 'model_weights_s1.pth')
+np.savez('standardization_NN3.npz', mean=train_mean, std=train_std)
+print("Model weights and standardization saved successfully!")

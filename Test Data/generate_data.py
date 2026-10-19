@@ -273,12 +273,8 @@ def generate_data(fcn, t0, y0, tf, tol, ord, ode_name=None, params = None, selec
             full_sol = sol.copy()
 
             # Choose compnent of solution with the most variation
-            sol_comps = []
-            for k in range(0,len(sol[0])):
-                sol_comps.append(np.array(sol[:,k]))
-
-            diffs = np.ptp(sol_comps, axis=1)
-            max_var = np.argmax(diffs)
+            # (same rule as most_varying_component, used when testing)
+            max_var = int(np.argmax(np.ptp(sol, axis=0)))
             sol = sol[:,max_var]
 
             # Approximate derivatives to select points on solution curves 
