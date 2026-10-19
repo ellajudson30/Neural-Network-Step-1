@@ -107,7 +107,11 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
         times.append(float(solver.t))
         
         # Check if we have enough history 
-        if len(time_steps) > numhist+2: 
+        if len(time_steps) > numhist+2:
+
+            # NN ratios are relative to the last accepted step (as in training),
+            # not solver.h_abs, which already holds PI's proposed next step
+            h_prev = time_steps[-1]
 
             # Construct feature vector to pass to NN
             feature = []
@@ -169,7 +173,7 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
                 quad_interp = interp1d(pred_errors, trial_ratios, kind='quadratic')
                 r_new = 0.95*float(quad_interp(target_tol))
 
-                h_trial = solver.h_abs*r_new
+                h_trial = h_prev*r_new
 
                 # Compute trial error to see if rejected
                 err_norm = compute_current_trial_err(solver, h_trial)
@@ -194,7 +198,7 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
                         candidate_r = 0.95*old_r
 
                     r_new = candidate_r
-                    h_trial = solver.h_abs*r_new
+                    h_trial = h_prev*r_new
                     err_norm = compute_current_trial_err(solver, h_trial)
 
                     print(f"r has been adjusted to {candidate_r} with error {err_norm}")
@@ -209,7 +213,7 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist):
                     #     print(f"r_new had been adjusted to ", r_new)
 
             # r_new = float(np.clip(r_new, 0.5, 1.5))
-            solver.h_abs = solver.h_abs * r_new           
+            solver.h_abs = h_prev * r_new
 
         nn_proposed_steps.append(solver.h_abs) 
         t_old = solver.t
