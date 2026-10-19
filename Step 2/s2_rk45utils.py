@@ -188,7 +188,7 @@ def compute_trial_err(solver, index, next_step_pct, times, solution, time_steps)
     
     t = times[index]
     y = solution[index]
-    h = time_steps[index]
+    h = time_steps[index-1] # last accepted step (into t), not the step PI takes next
     h_trial = next_step_pct*h
 
     K_trial = np.empty((solver.n_stages + 1, solver.n), dtype=solver.y.dtype)
