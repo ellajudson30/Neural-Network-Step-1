@@ -8,9 +8,9 @@ from rk45utils import *
 # ODEs used to generate data
 # ------------------------------------------------------------------
 # Exponential Decay
-lmda = [0.1, 0.5, 1, 2, 5, 10, 50]  # increase to get more points
+lmda = [0.1, 0.2, 0.5, 1, 2, 3, 5, 10, 20, 50]  # increase to get more points
 ed_t_span = [0,10]
-ed_y0 = [0.5, 1, 1.5, 2, 3] # increase to get more points
+ed_y0 = [-1, 0.1, 0.5, 1, 1.5, 2, 3, 5] # increase to get more points
 
 expdec_fcns = []
 for l in lmda:
@@ -19,8 +19,8 @@ for l in lmda:
     expdec_fcns.append(exp_decay)
 
 # Logistic
-R = [0.25,0.5,1,2, 5]
-K = [0.5,1,2]
+R = [0.25, 0.5, 0.75, 1, 2, 3, 5]
+K = [0.25, 0.5, 1, 2, 4]
 # log_t_span = [0,10]
 # log_y0 = [0.25, 0.5, 0.75, 1.25, 2, 5] # make this a function of k to smaple to whole solution curve
 
@@ -36,8 +36,8 @@ for r in R:
 
 # Multiple Scales
 ms_t_span = [0, 6*math.pi]
-ms_y0 = [-2, -1, 0, 0.5, 1, 2]
-k_vals=[1,1000]
+ms_y0 = [-3, -2, -1, 0, 0.5, 1, 2, 3]
+k_vals=[1, 10, 100, 1000]
 
 ms_fcns = []
 for k in k_vals:
@@ -47,19 +47,29 @@ for k in k_vals:
 
 # Oscillatory
 o_t_span = [0, 6*math.pi]
-o_y0 = [-2, -1, -0.5, 0.5, 1, 2]
-def oscil(t,y):
-    return y*math.cos(t)
+o_y0 = [-3, -2, -1, -0.5, 0.1, 0.3, 0.5, 1, 2, 3]
+o_vals = [(1, 1), (0.5, 1), (1, 2), (2, 0.5)]   # (a, w) in y' = a*y*cos(w*t)
+
+osc_fcns = []
+for a, w in o_vals:
+    def oscil(t, y, a=a, w=w):
+        return a*y*math.cos(w*t)
+    osc_fcns.append((oscil, {"a": a, "w": w}))
 
 # Simple Harmonic Motion
 shm_t_span = [0, 6*math.pi]
-shm_y0 = [[0.5, 0.0], [1.0, 1.0], [2.0, 0.0], [0.0, 2.0], [3.0, -1.0],]
-def shm(t,Y):
-    y,v = Y
-    return [v,-y]
+shm_y0 = [[0.5, 0.0], [1.0, 1.0], [2.0, 0.0], [0.0, 2.0], [3.0, -1.0], [-1.0, 0.5], [0.0, -1.0]]
+shm_omegas = [0.5, 1, 2]
+
+shm_fcns = []
+for om in shm_omegas:
+    def shm(t, Y, om=om):
+        y,v = Y
+        return [v, -om**2*y]
+    shm_fcns.append((shm, {"omega": om}))
 
 # VanDerPol
-m = [0.5, 1, 2]
+m = [0.25, 0.5, 1, 2, 3, 5]
 vdp_t_span = [0, 6*math.pi]
 vdp_y0 = [[0.1, 0.0], [2.0, 0.0], [0.0, 2.0], [1.0, -1.0], [3.0, 0.0]]
 
@@ -73,7 +83,7 @@ for val in m:
 # Damped Harmonic Motion
 d_t_span = [0, 6*math.pi]
 d_y0 = [[0.5, 0.0], [1.0, 1.0], [2.0, 0.0], [0.0, 2.0], [3.0, -1.0],]
-d_vals = [0.2,2,3]
+d_vals = [0.2, 0.5, 1, 2, 3]
 
 d_fcns = []
 for d in d_vals:
@@ -92,7 +102,7 @@ def blows_up(t,y):
 chirp_t_span = [0, 10]
 chirp_y0 = [-1, 0, 1]
 
-c_vals = [0.5, 1, 1.75] # add 2,4,8
+c_vals = [0.5, 1, 1.75, 2.5, 4]
 chirp_fcns=[]
 for c in c_vals:
     def chirp(t, y, c=c):
@@ -103,8 +113,25 @@ for c in c_vals:
 pulse_t_span = [0, 5]
 pulse_y0 = [0]
 
-def pulse(t, y):
-    return 10*np.exp(-100*(t-2.5)**2)
+pulse_vals = [(10, 100), (5, 50), (20, 400)]   # (A, s) in y' = A*exp(-s*(t - 2.5)^2)
+
+pulse_fcns = []
+for A, sp in pulse_vals:
+    def pulse(t, y, A=A, sp=sp):
+        return A*np.exp(-sp*(t-2.5)**2)
+    pulse_fcns.append((pulse, {"A": A, "s": sp}))
+
+# Duffing oscillator: y'' = -delta*y' - y - y^3 + gamma*cos(1.2 t), unforced and forced
+duff_t_span = [0, 6*math.pi]
+duff_y0 = [[1.0, 0.0], [0.0, 1.0], [-1.0, 0.5]]
+duff_gammas = [0, 0.3]
+
+duff_fcns = []
+for gm in duff_gammas:
+    def duffing(t, Y, gm=gm):
+        y, v = Y
+        return [v, -0.2*v - y - y**3 + gm*math.cos(1.2*t)]
+    duff_fcns.append((duffing, {"gamma": gm}))
 
 # Lorenz - standard parameters
 sigma = 10
@@ -463,21 +490,27 @@ if __name__ == "__main__":
     print("Total examples: ", len(Data_set))
 
     #4. Oscillating
-    Data_o, Sr_o, Md_o = generate_data(oscil, o_t_span[0], o_y0, o_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],
-                                    1, "oscillating", params={})
-    Data_set.extend(Data_o)
-    Ratios.extend(Sr_o)
-    Meta_data.extend(Md_o)
-    print("Examples generated with Oscillating: ", len(Data_o))
+    Total_ex = 0
+    for f,p in osc_fcns:
+        Data_o, Sr_o, Md_o = generate_data(f, o_t_span[0], o_y0, o_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],
+                                        1, "oscillating", params=p)
+        Data_set.extend(Data_o)
+        Ratios.extend(Sr_o)
+        Meta_data.extend(Md_o)
+        Total_ex += len(Data_o)
+    print("Examples generated with Oscillating: ", Total_ex)
     print("Total examples: ", len(Data_set))
 
     #5. Simple Harmonic Motion 
-    Data_shm, Sr_shm, Md_shm = generate_data(shm, shm_t_span[0], shm_y0, shm_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],
-                                            2, "shm", params={})
-    Data_set.extend(Data_shm)
-    Ratios.extend(Sr_shm)
-    Meta_data.extend(Md_shm)
-    print("Examples generated with SHM : ", len(Data_shm))
+    Total_ex = 0
+    for f,p in shm_fcns:
+        Data_shm, Sr_shm, Md_shm = generate_data(f, shm_t_span[0], shm_y0, shm_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],
+                                                2, "shm", params=p)
+        Data_set.extend(Data_shm)
+        Ratios.extend(Sr_shm)
+        Meta_data.extend(Md_shm)
+        Total_ex += len(Data_shm)
+    print("Examples generated with SHM : ", Total_ex)
     print("Total examples: ", len(Data_set))
 
     #6. VanDerPol
@@ -538,12 +571,27 @@ if __name__ == "__main__":
     print("Total examples: ", len(Data_set))
 
     #11. Gaussian Pulse
-    Data_p, Sr_p, Md_p = generate_data(pulse, pulse_t_span[0], pulse_y0, pulse_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],
-                                    1, "gaussian pulse", params={})
-    Data_set.extend(Data_p)
-    Ratios.extend(Sr_p)
-    Meta_data.extend(Md_p)
-    print("Examples generated with pulse: ", len(Data_p))
+    Total_ex = 0
+    for f,p in pulse_fcns:
+        Data_p, Sr_p, Md_p = generate_data(f, pulse_t_span[0], pulse_y0, pulse_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],
+                                        1, "gaussian pulse", params=p)
+        Data_set.extend(Data_p)
+        Ratios.extend(Sr_p)
+        Meta_data.extend(Md_p)
+        Total_ex += len(Data_p)
+    print("Examples generated with pulse: ", Total_ex)
+    print("Total examples: ", len(Data_set))
+
+    #12. Duffing oscillator
+    Total_ex = 0
+    for f,p in duff_fcns:
+        Data_df, Sr_df, Md_df = generate_data(f, duff_t_span[0], duff_y0, duff_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],
+                                            2, "duffing", params=p)
+        Data_set.extend(Data_df)
+        Ratios.extend(Sr_df)
+        Meta_data.extend(Md_df)
+        Total_ex += len(Data_df)
+    print("Examples generated with Duffing: ", Total_ex)
     print("Total examples: ", len(Data_set))
 
 

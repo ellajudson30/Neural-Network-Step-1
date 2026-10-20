@@ -32,14 +32,15 @@ JOBS = []
 JOBS += [("exp decay", f, {"lambda": l}, g.ed_y0, g.ed_t_span) for l, f in zip(g.lmda, g.expdec_fcns)]
 JOBS += [("logistic", f, p, y0, span) for f, p, y0, span in g.log_fcns]
 JOBS += [("multi-scales", f, p, g.ms_y0, g.ms_t_span) for f, p in g.ms_fcns]
-JOBS += [("oscillating", g.oscil, {}, g.o_y0, g.o_t_span)]
-JOBS += [("shm", g.shm, {}, g.shm_y0, g.shm_t_span)]
+JOBS += [("oscillating", f, p, g.o_y0, g.o_t_span) for f, p in g.osc_fcns]
+JOBS += [("shm", f, p, g.shm_y0, g.shm_t_span) for f, p in g.shm_fcns]
 JOBS += [("vanderpol", f, p, g.vdp_y0, g.vdp_t_span) for f, p in g.VDP_fcns]
 JOBS += [("damped hm", f, p, g.d_y0, g.d_t_span) for f, p in g.d_fcns]
 JOBS += [("1d blows up", g.blows_up, {}, g.bu_y0, g.bu_t_span)]
 JOBS += [("lorenz", f, p, g.L_y0, g.L_t_span) for f, p in g.L_fcns]
 JOBS += [("chirp", f, p, g.chirp_y0, g.chirp_t_span) for f, p in g.chirp_fcns]
-JOBS += [("gaussian pulse", g.pulse, {}, g.pulse_y0, g.pulse_t_span)]
+JOBS += [("gaussian pulse", f, p, g.pulse_y0, g.pulse_t_span) for f, p in g.pulse_fcns]
+JOBS += [("duffing", f, p, g.duff_y0, g.duff_t_span) for f, p in g.duff_fcns]
 
 def load_model():
     model = load_ensemble()
