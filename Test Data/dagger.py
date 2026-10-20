@@ -11,8 +11,9 @@ from train_ensemble import train_ensemble
 # The network is trained on states the PI controller visits, so when it drives the
 # solver it reaches states it has never seen (and its mistakes build up). Each
 # iteration: let the trained network drive the solver on the training ODEs, label
-# every state it reaches with what the PI controller would do there (pi_factor of the
-# error of the step into it), add those examples to the dataset and retrain.
+# every state it reaches with what the PI controller would do there (the step PI would
+# accept, including any retries after rejected trial steps), add those examples to the
+# dataset and retrain.
 # The network driving the rollouts is the seed ensemble (nn_model.py).
 # The error estimate is only used for labels, never as a network input.
 #
@@ -78,9 +79,11 @@ def rollout(fcn, t0, y0, tf, tol, model, train_mean, train_std):
             break  # derivative fit fails once the network's steps make the solution blow up
         if not np.all(np.isfinite(feature)):
             break
-        # PI's response at this state: at the first network decision (reached by PI)
-        # it is the step PI already proposed; after a network step, pi_factor of its error
-        label = solver.h_abs / steps[-1] if err_last is None else pi_factor(err_last)
+        # PI's response at this state: the step it would accept from here, starting from
+        # its own proposal (at the first network decision) or from pi_factor of the error
+        # of the network's last step, shrunk and retried while PI would reject it
+        h_prop = solver.h_abs if err_last is None else pi_factor(err_last)*steps[-1]
+        label = pi_accepted_step(solver, times[-1], solution[-1], h_prop) / steps[-1]
         examples.append((feature, label, len(steps), times[-1], solution[-1][c]))
 
         # Network chooses the next step

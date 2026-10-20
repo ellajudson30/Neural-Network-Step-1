@@ -181,7 +181,8 @@ def build_features(indices, solution, time_steps, stage_history):
 # Perturbed examples: the last N_PERTURB_STEPS steps are retaken with sizes p_k*h_k
 # (independent p_k, log-uniform in PERTURB_RANGE), so the network also sees states where
 # the step size is wrong and ratio histories that are not smooth.
-# Label = factor the PI controller would apply after the last step's error.
+# Label = ratio of the step PI would end up accepting from there (its first proposal
+# after the last step's error, shrunk and retried while rejected) to the last step.
 N_PERTURB = 2
 N_PERTURB_STEPS = 3
 PERTURB_RANGE = (0.5, 2.0)
@@ -193,8 +194,8 @@ def build_features_solhist(indices, times, solution, full_solution, time_steps, 
     log h, log tol, scaled derivative estimates up to order 5 and the stiffness estimate.
     For each index i, adds the example on the PI trajectory (label: PI's next ratio
     time_steps[i]/time_steps[i-1]) and N_PERTURB examples where the last
-    N_PERTURB_STEPS steps into point i are rescaled (label: pi_factor of the last
-    step's error).
+    N_PERTURB_STEPS steps into point i are rescaled (label: PI's accepted step from
+    there, divided by the last step).
     indices - of chosen data points to be added to dataset
     num_hist - number of previous solution points (must equal NUM_HIST)
     """
@@ -248,7 +249,8 @@ def build_features_solhist(indices, times, solution, full_solution, time_steps, 
                                         stiffness_estimate(fcn, t_cur, y_cur))
                 if not (np.isfinite(err) and np.all(np.isfinite(feature))):
                     continue  # larger steps can blow up (e.g. y' = y^2 near its pole)
-                examples.append((";".join(f"{p:.3f}" for p in ps), feature, pi_factor(err)))
+                h_acc = pi_accepted_step(solver, t_cur, y_cur, pi_factor(err)*h_k)
+                examples.append((";".join(f"{p:.3f}" for p in ps), feature, h_acc/h_k))
 
             for p, feature, r_next in examples:
                 data_list.append(feature)

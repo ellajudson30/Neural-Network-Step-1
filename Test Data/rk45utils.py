@@ -246,6 +246,19 @@ def pi_factor(error_norm):
         return 10.0
     return float(np.clip(0.9 * error_norm ** (-1/5), 0.2, 10.0))
 
+def pi_accepted_step(solver, t, y, h_proposed, max_tries=50):
+    """Step PI would end up taking from (t, y) when it first proposes h_proposed: while the
+    trial step's error norm is 1 or more, shrink it as RK45_counting._step_impl does and try
+    again. Used for training labels, so the network learns PI's accepted step rather than
+    a first guess PI would have rejected."""
+    h = h_proposed
+    for _ in range(max_tries):
+        _, err = trial_step(solver, t, y, h)
+        if np.isfinite(err) and err < 1:
+            return h
+        h *= 0.2 if not np.isfinite(err) else max(0.2, 0.9 * err ** (-1/5))
+    return h
+
 # Choose the solution component used in feature vectors
 def most_varying_component(fcn, t0, y0, tf, tol):
     """Run the PI solver and return the index of the solution component with the
