@@ -12,7 +12,12 @@ from sklearn.model_selection import KFold, GroupShuffleSplit
 import csv
 from rk45utils import run_RK45, N_FEATURES
 
-# Create Pytorch Dataset 
+# Seed weight initialisation and batch shuffling so training runs are reproducible
+SEED = 0
+torch.manual_seed(SEED)
+np.random.seed(SEED)
+
+# Create Pytorch Dataset
 class myDataset(Dataset):
     def __init__(self, features, labels, transform=None):
         self.features = torch.tensor(features, dtype=torch.float32)
