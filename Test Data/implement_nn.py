@@ -77,6 +77,7 @@ def run_solverNN(fcn, t0, y0, tf, tol, model, numhist, sol_component=None):
             derivs = [float(np.asarray(fcn(t, y)).reshape(-1)[sol_component])
                       for t, y in zip(times[-w:], solution[-w:])]
             feature = build_feature(times[-w:], derivs, time_steps[-(numhist+2):], tol,
+                                    solution[-1][sol_component],
                                     stiffness_estimate(fcn, times[-1], solution[-1]))
 
             # Standardize feature

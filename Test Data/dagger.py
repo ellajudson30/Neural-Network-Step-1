@@ -72,7 +72,7 @@ def rollout(fcn, t0, y0, tf, tol, model, train_mean, train_std):
         w = NUM_HIST + 1
         try:
             feature = build_feature(times[-w:], derivs[-w:],
-                                    steps[-(NUM_HIST+2):], tol,
+                                    steps[-(NUM_HIST+2):], tol, solution[-1][c],
                                     stiffness_estimate(fcn, times[-1], solution[-1]))
         except (np.linalg.LinAlgError, ValueError):
             break  # derivative fit fails once the network's steps make the solution blow up

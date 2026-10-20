@@ -162,9 +162,11 @@ def run_RK45(fcn, t0, y0, tf, tol):
 #---------------------------------------------------------------------
 NUM_HIST = 4                        # history points before the current point (derivative fit)
 NUM_RATIOS = 2                      # newest step ratios used as inputs
-# log ratios, log h, log tol, log|y'|..log|y^(5)|, stiffness (log h*rho and sign).
-# A feature ablation showed the raw solution values, derivative signs and older ratios
-# did not help; the solution values also tie the network to each problem's scale.
+# log ratios, log h, log tol, log(h^k |y^(k)| / (1 + |y|)) for k = 1..5, stiffness (log h*rho
+# and sign). A feature ablation showed the raw solution values, derivative signs and older
+# ratios did not help; the solution values also tie the network to each problem's scale.
+# Scaling the derivatives by h^k / (1 + |y|) (PI's tolerance scale) makes the network size
+# its steps like PI when |y| is large.
 N_FEATURES = NUM_RATIOS + 2 + (NUM_HIST+1) + 2
 DERIV_FLOOR = 1e-20                 # floor for log|derivative|
 STIFF_FLOOR = 1e-12                 # floor for log(h*rho)
@@ -189,15 +191,16 @@ def stiffness_estimate(fcn, t, y, n_iter=STIFF_ITERS):
         v = jv / rho
     return rho, float(np.sign(rq))
 
-def build_feature(times, derivs, steps, tol, stiff):
+def build_feature(times, derivs, steps, tol, y_now, stiff):
     """Build one feature vector from windows ending at the current point.
     times, derivs - NUM_HIST+1 values of t and y' (one solution component)
     steps - accepted step sizes, the last one being the step into the current point
             (the last NUM_RATIOS+1 are used)
+    y_now - value of the same solution component at the current point
     stiff - (rho, sign) from stiffness_estimate at the current point
     Returns (in order): log of the NUM_RATIOS newest step ratios (oldest first), log h,
-    log tol, log|y^(k)| for k=1..5 at the current point, log(h*rho), sign of the
-    dominant eigenvalue's real part.
+    log tol, log(h^k |y^(k)| / (1 + |y|)) for k=1..5 at the current point, log(h*rho),
+    sign of the dominant eigenvalue's real part.
     """
     times = np.asarray(times, dtype=float)
     steps = np.asarray(steps, dtype=float)
@@ -215,8 +218,11 @@ def build_feature(times, derivs, steps, tol, stiff):
         d.append(math.factorial(k) * coeffs[k] / h**k)
     d = np.array(d)
 
-    feature = list(log_ratios) + [np.log(h), np.log(tol)]
-    feature += list(np.log(np.maximum(np.abs(d), DERIV_FLOOR)))
+    # Derivatives relative to the step and to PI's tolerance scale (1 + |y|)
+    k = np.arange(1, NUM_HIST+2)
+    log_d = np.log(np.maximum(np.abs(d), DERIV_FLOOR)) + k*np.log(h) - np.log1p(abs(y_now))
+
+    feature = list(log_ratios) + [np.log(h), np.log(tol)] + list(log_d)
 
     # h*rho measures how close the step is to RK45's stability limit (|h*lambda| ~ 3)
     rho, sign = stiff

@@ -190,7 +190,7 @@ perturb_rng = np.random.default_rng(0)
 def build_features_solhist(indices, times, solution, full_solution, time_steps, num_hist, tol,
                            fcn, sol_component, ode_name, params, initial_condition):
     """ Builds feature vectors with build_feature (rk45utils): newest log ratios,
-    log h, log tol, derivative estimates up to order 5 and the stiffness estimate.
+    log h, log tol, scaled derivative estimates up to order 5 and the stiffness estimate.
     For each index i, adds the example on the PI trajectory (label: PI's next ratio
     time_steps[i]/time_steps[i-1]) and N_PERTURB examples where the last
     N_PERTURB_STEPS steps into point i are rescaled (label: pi_factor of the last
@@ -225,6 +225,7 @@ def build_features_solhist(indices, times, solution, full_solution, time_steps, 
 
             # Example on the PI trajectory
             examples = [(1.0, build_feature(t_win, d_win, steps, tol,
+                                            full_solution[i][sol_component],
                                             stiffness_estimate(fcn, times[i], full_solution[i])),
                          time_steps[i]/time_steps[i-1])]
 
@@ -243,7 +244,7 @@ def build_features_solhist(indices, times, solution, full_solution, time_steps, 
                     new_d.append(deriv(t_cur, y_cur))
                     new_h.append(h_k)
                 feature = build_feature(t_win[:-n] + new_t, d_win[:-n] + new_d,
-                                        steps[:-n] + new_h, tol,
+                                        steps[:-n] + new_h, tol, y_cur[sol_component],
                                         stiffness_estimate(fcn, t_cur, y_cur))
                 if not (np.isfinite(err) and np.all(np.isfinite(feature))):
                     continue  # larger steps can blow up (e.g. y' = y^2 near its pole)
