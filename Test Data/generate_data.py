@@ -189,8 +189,8 @@ perturb_rng = np.random.default_rng(0)
 
 def build_features_solhist(indices, times, solution, full_solution, time_steps, num_hist, tol,
                            fcn, sol_component, ode_name, params, initial_condition):
-    """ Builds feature vectors with build_feature (rk45utils): solution history,
-    log ratio history, log h, log tol and derivative estimates up to order 5.
+    """ Builds feature vectors with build_feature (rk45utils): newest log ratios,
+    log h, log tol, derivative estimates up to order 5 and the stiffness estimate.
     For each index i, adds the example on the PI trajectory (label: PI's next ratio
     time_steps[i]/time_steps[i-1]) and N_PERTURB examples where the last
     N_PERTURB_STEPS steps into point i are rescaled (label: pi_factor of the last
@@ -220,12 +220,11 @@ def build_features_solhist(indices, times, solution, full_solution, time_steps, 
         else:
             w = slice(i-num_hist, i+1)
             t_win = list(times[w])
-            y_win = list(solution[w])
             d_win = [deriv(t, y) for t, y in zip(times[w], full_solution[w])]
             steps = list(time_steps[i-num_hist-2:i])
 
             # Example on the PI trajectory
-            examples = [(1.0, build_feature(t_win, y_win, d_win, steps, tol,
+            examples = [(1.0, build_feature(t_win, d_win, steps, tol,
                                             stiffness_estimate(fcn, times[i], full_solution[i])),
                          time_steps[i]/time_steps[i-1])]
 
@@ -235,17 +234,16 @@ def build_features_solhist(indices, times, solution, full_solution, time_steps, 
             for _ in range(N_PERTURB):
                 ps = np.exp(perturb_rng.uniform(*np.log(PERTURB_RANGE), n))
                 t_cur, y_cur = times[i-n], full_solution[i-n]
-                new_t, new_y, new_d, new_h = [], [], [], []
+                new_t, new_d, new_h = [], [], []
                 for k, p in enumerate(ps):
                     h_k = p*time_steps[i-n+k]
                     y_cur, err = trial_step(solver, t_cur, y_cur, h_k)
                     t_cur = t_cur + h_k
                     new_t.append(t_cur)
-                    new_y.append(y_cur[sol_component])
                     new_d.append(deriv(t_cur, y_cur))
                     new_h.append(h_k)
-                feature = build_feature(t_win[:-n] + new_t, y_win[:-n] + new_y,
-                                        d_win[:-n] + new_d, steps[:-n] + new_h, tol,
+                feature = build_feature(t_win[:-n] + new_t, d_win[:-n] + new_d,
+                                        steps[:-n] + new_h, tol,
                                         stiffness_estimate(fcn, t_cur, y_cur))
                 if not (np.isfinite(err) and np.all(np.isfinite(feature))):
                     continue  # larger steps can blow up (e.g. y' = y^2 near its pole)

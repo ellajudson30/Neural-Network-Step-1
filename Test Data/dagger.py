@@ -71,7 +71,7 @@ def rollout(fcn, t0, y0, tf, tol, model, train_mean, train_std):
     while times[-1] < tf and len(steps) < MAX_STEPS:
         w = NUM_HIST + 1
         try:
-            feature = build_feature(times[-w:], [y[c] for y in solution[-w:]], derivs[-w:],
+            feature = build_feature(times[-w:], derivs[-w:],
                                     steps[-(NUM_HIST+2):], tol,
                                     stiffness_estimate(fcn, times[-1], solution[-1]))
         except (np.linalg.LinAlgError, ValueError):

@@ -114,8 +114,7 @@ def run_RK45_NN(fcn, t0, y0, tf, tol, model, numhist, sol_component=None):
             w = numhist + 1
             derivs = [float(np.asarray(fcn(t, y)).reshape(-1)[sol_component])
                       for t, y in zip(times[-w:], solution[-w:])]
-            feature = build_feature(times[-w:], [y[sol_component] for y in solution[-w:]],
-                                    derivs, time_steps[-(numhist+2):], tol,
+            feature = build_feature(times[-w:], derivs, time_steps[-(numhist+2):], tol,
                                     stiffness_estimate(fcn, times[-1], solution[-1]))
 
             # Standardize feature
