@@ -8,9 +8,9 @@ from rk45utils import *
 # ODEs used to generate data
 # ------------------------------------------------------------------
 # Exponential Decay
-lmda = [0.1, 0.5, 1, 2, 5, 10, 50]  # increase to get more points
+lmda = [0.1, 0.2, 0.5, 1, 2, 3, 5, 10, 20, 50]  # increase to get more points
 ed_t_span = [0,10]
-ed_y0 = [0.5, 1, 1.5, 2, 3] # increase to get more points
+ed_y0 = [-1, 0.1, 0.5, 1, 1.5, 2, 3, 5] # increase to get more points
 
 expdec_fcns = []
 for l in lmda:
@@ -19,8 +19,8 @@ for l in lmda:
     expdec_fcns.append(exp_decay)
 
 # Logistic
-R = [0.25,0.5,1,2, 5]
-K = [0.5,1,2]
+R = [0.25, 0.5, 0.75, 1, 2, 3, 5]
+K = [0.25, 0.5, 1, 2, 4]
 # log_t_span = [0,10]
 # log_y0 = [0.25, 0.5, 0.75, 1.25, 2, 5] # make this a function of k to smaple to whole solution curve
 
@@ -36,8 +36,8 @@ for r in R:
 
 # Multiple Scales
 ms_t_span = [0, 6*math.pi]
-ms_y0 = [-2, -1, 0, 0.5, 1, 2]
-k_vals=[1,1000]
+ms_y0 = [-3, -2, -1, 0, 0.5, 1, 2, 3]
+k_vals=[1, 10, 100, 1000]
 
 ms_fcns = []
 for k in k_vals:
@@ -47,19 +47,29 @@ for k in k_vals:
 
 # Oscillatory
 o_t_span = [0, 6*math.pi]
-o_y0 = [-2, -1, -0.5, 0.5, 1, 2]
-def oscil(t,y):
-    return y*math.cos(t)
+o_y0 = [-3, -2, -1, -0.5, 0.1, 0.3, 0.5, 1, 2, 3]
+o_vals = [(1, 1), (0.5, 1), (1, 2), (2, 0.5)]   # (a, w) in y' = a*y*cos(w*t)
+
+osc_fcns = []
+for a, w in o_vals:
+    def oscil(t, y, a=a, w=w):
+        return a*y*math.cos(w*t)
+    osc_fcns.append((oscil, {"a": a, "w": w}))
 
 # Simple Harmonic Motion
 shm_t_span = [0, 6*math.pi]
-shm_y0 = [[0.5, 0.0], [1.0, 1.0], [2.0, 0.0], [0.0, 2.0], [3.0, -1.0],]
-def shm(t,Y):
-    y,v = Y
-    return [v,-y]
+shm_y0 = [[0.5, 0.0], [1.0, 1.0], [2.0, 0.0], [0.0, 2.0], [3.0, -1.0], [-1.0, 0.5], [0.0, -1.0]]
+shm_omegas = [0.5, 1, 2]
+
+shm_fcns = []
+for om in shm_omegas:
+    def shm(t, Y, om=om):
+        y,v = Y
+        return [v, -om**2*y]
+    shm_fcns.append((shm, {"omega": om}))
 
 # VanDerPol
-m = [0.5, 1, 2]
+m = [0.25, 0.5, 1, 2, 3, 5]
 vdp_t_span = [0, 6*math.pi]
 vdp_y0 = [[0.1, 0.0], [2.0, 0.0], [0.0, 2.0], [1.0, -1.0], [3.0, 0.0]]
 
@@ -73,7 +83,7 @@ for val in m:
 # Damped Harmonic Motion
 d_t_span = [0, 6*math.pi]
 d_y0 = [[0.5, 0.0], [1.0, 1.0], [2.0, 0.0], [0.0, 2.0], [3.0, -1.0],]
-d_vals = [0.2,2,3]
+d_vals = [0.2, 0.5, 1, 2, 3]
 
 d_fcns = []
 for d in d_vals:
@@ -92,7 +102,7 @@ def blows_up(t,y):
 chirp_t_span = [0, 10]
 chirp_y0 = [-1, 0, 1]
 
-c_vals = [0.5, 1, 1.75] # add 2,4,8
+c_vals = [0.5, 1, 1.75, 2.5, 4]
 chirp_fcns=[]
 for c in c_vals:
     def chirp(t, y, c=c):
@@ -103,8 +113,25 @@ for c in c_vals:
 pulse_t_span = [0, 5]
 pulse_y0 = [0]
 
-def pulse(t, y):
-    return 10*np.exp(-100*(t-2.5)**2)
+pulse_vals = [(10, 100), (5, 50), (20, 400)]   # (A, s) in y' = A*exp(-s*(t - 2.5)^2)
+
+pulse_fcns = []
+for A, sp in pulse_vals:
+    def pulse(t, y, A=A, sp=sp):
+        return A*np.exp(-sp*(t-2.5)**2)
+    pulse_fcns.append((pulse, {"A": A, "s": sp}))
+
+# Duffing oscillator: y'' = -delta*y' - y - y^3 + gamma*cos(1.2 t), unforced and forced
+duff_t_span = [0, 6*math.pi]
+duff_y0 = [[1.0, 0.0], [0.0, 1.0], [-1.0, 0.5]]
+duff_gammas = [0, 0.3]
+
+duff_fcns = []
+for gm in duff_gammas:
+    def duffing(t, Y, gm=gm):
+        y, v = Y
+        return [v, -0.2*v - y - y**3 + gm*math.cos(1.2*t)]
+    duff_fcns.append((duffing, {"gamma": gm}))
 
 # Lorenz - standard parameters
 sigma = 10
@@ -178,18 +205,38 @@ def build_features(indices, solution, time_steps, stage_history):
         next_step_ratio.append(r_next)
 
     return data_list, next_step_ratio
-def build_features_solhist(indices, times, solution, full_solution, time_steps, num_hist, tol, 
+# Perturbed examples: the last N_PERTURB_STEPS steps are retaken with sizes p_k*h_k
+# (independent p_k, log-uniform in PERTURB_RANGE), so the network also sees states where
+# the step size is wrong and ratio histories that are not smooth.
+# Label = ratio of the step PI would end up accepting from there (its first proposal
+# after the last step's error, shrunk and retried while rejected) to the last step.
+N_PERTURB = 2
+N_PERTURB_STEPS = 3
+PERTURB_RANGE = (0.5, 2.0)
+perturb_rng = np.random.default_rng(0)
+
+def build_features_solhist(indices, times, solution, full_solution, time_steps, num_hist, tol,
                            fcn, sol_component, ode_name, params, initial_condition):
-    """ Builds a feature vector containing solution and ratio history and log(tol).
-    Feature vector is of length: (num_hist + 1)*2 +1
-    I.e. : num_hist = 2, index i
-    => vec = [sol[i-2], sol[i-1], sol[i], r[i-2], r[i-1], r[i], log(tol)]
+    """ Builds feature vectors with build_feature (rk45utils): newest log ratios,
+    log h, log tol, scaled derivative estimates up to order 5 and the stiffness estimate.
+    For each index i, adds the example on the PI trajectory (label: PI's next ratio
+    time_steps[i]/time_steps[i-1]) and N_PERTURB examples where the last
+    N_PERTURB_STEPS steps into point i are rescaled (label: PI's accepted step from
+    there, divided by the last step).
     indices - of chosen data points to be added to dataset
-    num_hist - number of previous solution points (adds numhist+1 items)
+    num_hist - number of previous solution points (must equal NUM_HIST)
     """
+    assert num_hist == NUM_HIST
     data_list = []
     next_step_ratio = []
     metadata_list = []
+
+    # Solver object only provides the RK45 tableau and error norm for trial steps
+    solver = RK45(fcn, times[0], full_solution[0], times[-1], rtol=tol, atol=tol)
+
+    def deriv(t, y):
+        return float(np.asarray(fcn(t, y)).reshape(-1)[sol_component])
+
     for i in indices:
 
         # Check if index is at the end of the time span
@@ -199,44 +246,56 @@ def build_features_solhist(indices, times, solution, full_solution, time_steps, 
         elif i < num_hist + 2:
             print("not enough solution history at this point")
         else:
-            # Add Solution History
-            feature = []
-            for k in range(num_hist, -1, -1):
-                feature.append(float(solution[i-k]))
+            w = slice(i-num_hist, i+1)
+            t_win = list(times[w])
+            d_win = [deriv(t, y) for t, y in zip(times[w], full_solution[w])]
+            steps = list(time_steps[i-num_hist-2:i])
 
-            # Add ratio history
-            for j in range(num_hist, -1, -1):
-                r = time_steps[i-j-1]/time_steps[i-j-2]
-                feature.append(r)
+            # Example on the PI trajectory
+            examples = [(1.0, build_feature(t_win, d_win, steps, tol,
+                                            full_solution[i][sol_component],
+                                            stiffness_estimate(fcn, times[i], full_solution[i])),
+                         time_steps[i]/time_steps[i-1])]
 
-            # Add derivative history
-            for l in range(num_hist,-1,-1):
-                deriv = fcn(times[i-l], full_solution[i-l])
-                deriv = np.asarray(deriv).reshape(-1)[sol_component]
-                # deriv = deriv[sol_comp]
-                feature.append(float(deriv))
+            # Perturbed examples: retake the last n steps into point i, step k with
+            # size p_k*time_steps[i-n+k], rolling the solution forward
+            n = N_PERTURB_STEPS
+            for _ in range(N_PERTURB):
+                ps = np.exp(perturb_rng.uniform(*np.log(PERTURB_RANGE), n))
+                t_cur, y_cur = times[i-n], full_solution[i-n]
+                new_t, new_d, new_h = [], [], []
+                for k, p in enumerate(ps):
+                    h_k = p*time_steps[i-n+k]
+                    y_cur, err = trial_step(solver, t_cur, y_cur, h_k)
+                    t_cur = t_cur + h_k
+                    new_t.append(t_cur)
+                    new_d.append(deriv(t_cur, y_cur))
+                    new_h.append(h_k)
+                feature = build_feature(t_win[:-n] + new_t, d_win[:-n] + new_d,
+                                        steps[:-n] + new_h, tol, y_cur[sol_component],
+                                        stiffness_estimate(fcn, t_cur, y_cur))
+                if not (np.isfinite(err) and np.all(np.isfinite(feature))):
+                    continue  # larger steps can blow up (e.g. y' = y^2 near its pole)
+                h_acc = pi_accepted_step(solver, t_cur, y_cur, pi_factor(err)*h_k)
+                examples.append((";".join(f"{p:.3f}" for p in ps), feature, h_acc/h_k))
 
-            feature.append(np.log(tol))
+            for p, feature, r_next in examples:
+                data_list.append(feature)
+                next_step_ratio.append(r_next)
 
-            data_list.append(feature)
-
-            # Create vector of next time steps
-            r_next = time_steps[i]/time_steps[i-1]
-            next_step_ratio.append(r_next)
-
-            # Metadata corresponding to THIS example
-            metadata_list.append([
-                ode_name,
-                str(initial_condition),
-                str(params),
-                i,
-                times[i],
-                tol,
-                sol_component,
-                solution[i],
-                r_next
-            ])
-
+                # Metadata corresponding to THIS example
+                metadata_list.append([
+                    ode_name,
+                    str(initial_condition),
+                    str(params),
+                    i,
+                    times[i],
+                    tol,
+                    sol_component,
+                    solution[i],
+                    r_next,
+                    p
+                ])
 
     return data_list, next_step_ratio, metadata_list
 
@@ -273,12 +332,8 @@ def generate_data(fcn, t0, y0, tf, tol, ord, ode_name=None, params = None, selec
             full_sol = sol.copy()
 
             # Choose compnent of solution with the most variation
-            sol_comps = []
-            for k in range(0,len(sol[0])):
-                sol_comps.append(np.array(sol[:,k]))
-
-            diffs = np.ptp(sol_comps, axis=1)
-            max_var = np.argmax(diffs)
+            # (same rule as most_varying_component, used when testing)
+            max_var = int(np.argmax(np.ptp(sol, axis=0)))
             sol = sol[:,max_var]
 
             # Approximate derivatives to select points on solution curves 
@@ -435,21 +490,27 @@ if __name__ == "__main__":
     print("Total examples: ", len(Data_set))
 
     #4. Oscillating
-    Data_o, Sr_o, Md_o = generate_data(oscil, o_t_span[0], o_y0, o_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],
-                                    1, "oscillating", params={})
-    Data_set.extend(Data_o)
-    Ratios.extend(Sr_o)
-    Meta_data.extend(Md_o)
-    print("Examples generated with Oscillating: ", len(Data_o))
+    Total_ex = 0
+    for f,p in osc_fcns:
+        Data_o, Sr_o, Md_o = generate_data(f, o_t_span[0], o_y0, o_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],
+                                        1, "oscillating", params=p)
+        Data_set.extend(Data_o)
+        Ratios.extend(Sr_o)
+        Meta_data.extend(Md_o)
+        Total_ex += len(Data_o)
+    print("Examples generated with Oscillating: ", Total_ex)
     print("Total examples: ", len(Data_set))
 
     #5. Simple Harmonic Motion 
-    Data_shm, Sr_shm, Md_shm = generate_data(shm, shm_t_span[0], shm_y0, shm_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],
-                                            2, "shm", params={})
-    Data_set.extend(Data_shm)
-    Ratios.extend(Sr_shm)
-    Meta_data.extend(Md_shm)
-    print("Examples generated with SHM : ", len(Data_shm))
+    Total_ex = 0
+    for f,p in shm_fcns:
+        Data_shm, Sr_shm, Md_shm = generate_data(f, shm_t_span[0], shm_y0, shm_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],
+                                                2, "shm", params=p)
+        Data_set.extend(Data_shm)
+        Ratios.extend(Sr_shm)
+        Meta_data.extend(Md_shm)
+        Total_ex += len(Data_shm)
+    print("Examples generated with SHM : ", Total_ex)
     print("Total examples: ", len(Data_set))
 
     #6. VanDerPol
@@ -510,12 +571,27 @@ if __name__ == "__main__":
     print("Total examples: ", len(Data_set))
 
     #11. Gaussian Pulse
-    Data_p, Sr_p, Md_p = generate_data(pulse, pulse_t_span[0], pulse_y0, pulse_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],
-                                    1, "gaussian pulse", params={})
-    Data_set.extend(Data_p)
-    Ratios.extend(Sr_p)
-    Meta_data.extend(Md_p)
-    print("Examples generated with pulse: ", len(Data_p))
+    Total_ex = 0
+    for f,p in pulse_fcns:
+        Data_p, Sr_p, Md_p = generate_data(f, pulse_t_span[0], pulse_y0, pulse_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],
+                                        1, "gaussian pulse", params=p)
+        Data_set.extend(Data_p)
+        Ratios.extend(Sr_p)
+        Meta_data.extend(Md_p)
+        Total_ex += len(Data_p)
+    print("Examples generated with pulse: ", Total_ex)
+    print("Total examples: ", len(Data_set))
+
+    #12. Duffing oscillator
+    Total_ex = 0
+    for f,p in duff_fcns:
+        Data_df, Sr_df, Md_df = generate_data(f, duff_t_span[0], duff_y0, duff_t_span[1], [1e-3, 1e-4, 1e-6, 1e-8, 1e-10],
+                                            2, "duffing", params=p)
+        Data_set.extend(Data_df)
+        Ratios.extend(Sr_df)
+        Meta_data.extend(Md_df)
+        Total_ex += len(Data_df)
+    print("Examples generated with Duffing: ", Total_ex)
     print("Total examples: ", len(Data_set))
 
 
@@ -551,7 +627,8 @@ if __name__ == "__main__":
             "tolerance",
             "component",
             "solution",
-            "true_ratio"
+            "true_ratio",
+            "step_perturbation"
         ])
 
         writer.writerows(Meta_data)

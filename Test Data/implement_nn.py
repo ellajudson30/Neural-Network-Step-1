@@ -7,29 +7,12 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 from rk45utils import *
+from nn_model import load_ensemble
 
 # Import trained NN 
 #-----------------------------------------------------------------------
-class NN(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(16,64),
-            nn.Tanh(), 
-            nn.Linear(64,64),
-            nn.Tanh(),
-            nn.Linear(64,32),
-            nn.Tanh(),
-            nn.Linear(32,1)
-        ) 
-    
-    def forward(self, x):
-        output = self.net(x)
-        return output
-
-model = NN()
-model.load_state_dict(torch.load('model_weights_s1.pth'))
-model.eval()
+# Average of the networks trained with each seed in nn_model.ENSEMBLE_SEEDS
+model = load_ensemble()
 
 # Load standardization variables
 stats = np.load('standardization_NN3.npz')
@@ -53,7 +36,11 @@ def take_RK45_step(solver, fcn, times, solution, tf, tol, h):
                                    solver.C, K_trial)
     return y_new
 
-def run_solverNN(fcn, t0, y0, tf, tol, model, numhist):
+def run_solverNN(fcn, t0, y0, tf, tol, model, numhist, sol_component=None):
+    """sol_component - solution component used in features. Defaults to the one with
+    the largest range, as in generate_data."""
+    if sol_component is None:
+        sol_component = most_varying_component(fcn, t0, y0, tf, tol)
 
     solver = RK45_counting(fcn,t0, y0, tf, rtol=tol, atol=tol)
     model.eval()
@@ -85,27 +72,13 @@ def run_solverNN(fcn, t0, y0, tf, tol, model, numhist):
             t = solver.t
 
         else:
-            # Construct feature vector to pass to NN
-            feature = []
-
-            for i in range(numhist,-1,-1):
-                feature.append(float(solution[-1-i][0]))  
-            
-            for j in range(numhist, -1,-1):
-                ratio = time_steps[-1-j]/time_steps[-2-j]
-                feature.append(ratio)
-            for k in range(numhist, -1, -1):
-            
-                # Evaluate RHS
-                deriv = fcn(times[-1-k], solution[-1-k])
-            
-                # Make sure derivative is an array
-                deriv = np.asarray(deriv).reshape(-1)
-            
-                # Take derivative of first solution component
-                feature.append(float(deriv[0]))
-            
-            feature.append(float(np.log(tol)))
+            # Construct feature vector to pass to NN (same builder as generate_data)
+            w = numhist + 1
+            derivs = [float(np.asarray(fcn(t, y)).reshape(-1)[sol_component])
+                      for t, y in zip(times[-w:], solution[-w:])]
+            feature = build_feature(times[-w:], derivs, time_steps[-(numhist+2):], tol,
+                                    solution[-1][sol_component],
+                                    stiffness_estimate(fcn, times[-1], solution[-1]))
 
             # Standardize feature
             feature = np.array(feature).reshape(1, -1)
@@ -114,7 +87,7 @@ def run_solverNN(fcn, t0, y0, tf, tol, model, numhist):
             # Predict next step with NN
             feat_ten = torch.tensor(feature, dtype=torch.float32)
             with torch.no_grad():
-                r_nn = model(feat_ten).item()
+                r_nn = float(np.exp(model(feat_ten).item()))  # network predicts log ratio
                 nn_ratios.append(r_nn)
 
             h_nn = time_steps[-1]*r_nn

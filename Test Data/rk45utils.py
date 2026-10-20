@@ -1,3 +1,4 @@
+import math
 import numpy as np
 from scipy.integrate import RK45
 from scipy.integrate._ivp.rk import rk_step
@@ -157,7 +158,115 @@ def run_RK45(fcn, t0, y0, tf, tol):
         np.array(solver.rejections_per_step)
         )
 
-# Approximate derviatives 
+# Feature vector shared by data generation and testing
+#---------------------------------------------------------------------
+NUM_HIST = 4                        # history points before the current point (derivative fit)
+NUM_RATIOS = 2                      # newest step ratios used as inputs
+# log ratios, log h, log tol, log(h^k |y^(k)| / (1 + |y|)) for k = 1..5, stiffness (log h*rho
+# and sign). A feature ablation showed the raw solution values, derivative signs and older
+# ratios did not help; the solution values also tie the network to each problem's scale.
+# Scaling the derivatives by h^k / (1 + |y|) (PI's tolerance scale) makes the network size
+# its steps like PI when |y| is large.
+N_FEATURES = NUM_RATIOS + 2 + (NUM_HIST+1) + 2
+DERIV_FLOOR = 1e-20                 # floor for log|derivative|
+STIFF_FLOOR = 1e-12                 # floor for log(h*rho)
+STIFF_ITERS = 3                     # power iterations (one f evaluation each)
+
+def stiffness_estimate(fcn, t, y, n_iter=STIFF_ITERS):
+    """Estimate the dominant eigenvalue of the Jacobian df/dy at (t, y) by power iteration
+    on finite-difference Jacobian-vector products, J v ~ (f(t, y + eps v) - f(t, y)) / eps.
+    For a scalar ODE one iteration gives df/dy exactly (up to rounding).
+    Returns (rho, sign): the spectral radius estimate and the sign of the Rayleigh
+    quotient v.Jv (negative for decaying modes, which is when a large rho means stiffness)."""
+    y = np.asarray(y, dtype=float).reshape(-1)
+    f0 = np.asarray(fcn(t, y), dtype=float).reshape(-1)
+    v = np.ones_like(y) / np.sqrt(y.size)
+    rho, rq = 0.0, 0.0
+    for _ in range(n_iter):
+        eps = 1e-7 * (1 + np.linalg.norm(y))
+        jv = (np.asarray(fcn(t, y + eps*v), dtype=float).reshape(-1) - f0) / eps
+        rho, rq = float(np.linalg.norm(jv)), float(v @ jv)
+        if not (np.isfinite(rho) and rho > 0):
+            break
+        v = jv / rho
+    return rho, float(np.sign(rq))
+
+def build_feature(times, derivs, steps, tol, y_now, stiff):
+    """Build one feature vector from windows ending at the current point.
+    times, derivs - NUM_HIST+1 values of t and y' (one solution component)
+    steps - accepted step sizes, the last one being the step into the current point
+            (the last NUM_RATIOS+1 are used)
+    y_now - value of the same solution component at the current point
+    stiff - (rho, sign) from stiffness_estimate at the current point
+    Returns (in order): log of the NUM_RATIOS newest step ratios (oldest first), log h,
+    log tol, log(h^k |y^(k)| / (1 + |y|)) for k=1..5 at the current point, log(h*rho),
+    sign of the dominant eigenvalue's real part.
+    """
+    times = np.asarray(times, dtype=float)
+    steps = np.asarray(steps, dtype=float)
+    h = steps[-1]
+
+    recent = steps[-(NUM_RATIOS+1):]
+    log_ratios = np.log(recent[1:] / recent[:-1])
+
+    # Derivatives at the current point: y' is exact, y''..y^(5) come from the
+    # degree-4 polynomial through the y' history (times scaled by h for conditioning)
+    s = (times - times[-1]) / h
+    coeffs = np.polyfit(s, derivs, NUM_HIST)[::-1]   # coeffs[k] multiplies s^k
+    d = [float(derivs[-1])]
+    for k in range(1, NUM_HIST+1):
+        d.append(math.factorial(k) * coeffs[k] / h**k)
+    d = np.array(d)
+
+    # Derivatives relative to the step and to PI's tolerance scale (1 + |y|)
+    k = np.arange(1, NUM_HIST+2)
+    log_d = np.log(np.maximum(np.abs(d), DERIV_FLOOR)) + k*np.log(h) - np.log1p(abs(y_now))
+
+    feature = list(log_ratios) + [np.log(h), np.log(tol)] + list(log_d)
+
+    # h*rho measures how close the step is to RK45's stability limit (|h*lambda| ~ 3)
+    rho, sign = stiff
+    feature += [np.log(max(h*rho, STIFF_FLOOR)), sign]
+    return feature
+
+def trial_step(solver, t, y, h):
+    """Take one RK45 step of size h from (t, y) using the solver's tableau.
+    Returns the new solution and the error norm the PI controller would see."""
+    y = np.asarray(y, dtype=float)
+    K = np.empty((solver.n_stages + 1, solver.n), dtype=float)
+    f = np.asarray(solver.fun(t, y), dtype=float)
+    y_new, _ = rk_step(solver.fun, t, y, f, h, solver.A, solver.B, solver.C, K)
+    scale = solver.atol + np.maximum(np.abs(y), np.abs(y_new)) * solver.rtol
+    return y_new, solver._estimate_error_norm(K, h, scale)
+
+def pi_factor(error_norm):
+    """Step-size factor the PI controller applies after a step with this error norm
+    (same constants as RK45_counting._step_impl)."""
+    if error_norm == 0:
+        return 10.0
+    return float(np.clip(0.9 * error_norm ** (-1/5), 0.2, 10.0))
+
+def pi_accepted_step(solver, t, y, h_proposed, max_tries=50):
+    """Step PI would end up taking from (t, y) when it first proposes h_proposed: while the
+    trial step's error norm is 1 or more, shrink it as RK45_counting._step_impl does and try
+    again. Used for training labels, so the network learns PI's accepted step rather than
+    a first guess PI would have rejected."""
+    h = h_proposed
+    for _ in range(max_tries):
+        _, err = trial_step(solver, t, y, h)
+        if np.isfinite(err) and err < 1:
+            return h
+        h *= 0.2 if not np.isfinite(err) else max(0.2, 0.9 * err ** (-1/5))
+    return h
+
+# Choose the solution component used in feature vectors
+def most_varying_component(fcn, t0, y0, tf, tol):
+    """Run the PI solver and return the index of the solution component with the
+    largest range. Training data uses this component, so testing must use it too."""
+    _, sol, *_ = run_RK45(fcn, t0, y0, tf, tol)
+    return int(np.argmax(np.ptp(sol, axis=0)))
+
+# Approximate derviatives
 def compute_first_deriv(fcn, sol, times):
     """Given a sketelon of a solution, use a finite difference stencil on a 
     non-uniform grid to approximate the first derivative

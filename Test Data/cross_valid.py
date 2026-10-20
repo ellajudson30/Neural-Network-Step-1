@@ -8,11 +8,19 @@ import torch.nn as nn
 from torch.utils.data import Dataset, Subset, DataLoader
 import torch.optim as optim
 import matplotlib.pyplot as plt
-from sklearn.model_selection import KFold, train_test_split
+from sklearn.model_selection import KFold, GroupShuffleSplit
 import csv
-from rk45utils import run_RK45
+import sys
+from rk45utils import run_RK45, N_FEATURES
+from nn_model import NN3, weights_path
 
-# Create Pytorch Dataset 
+# Seed weight initialisation and batch shuffling so training runs are reproducible.
+# Usage: python cross_valid.py <seed>  (default 0); train_ensemble.py runs one per seed
+SEED = int(sys.argv[1]) if len(sys.argv) > 1 else 0
+torch.manual_seed(SEED)
+np.random.seed(SEED)
+
+# Create Pytorch Dataset
 class myDataset(Dataset):
     def __init__(self, features, labels, transform=None):
         self.features = torch.tensor(features, dtype=torch.float32)
@@ -57,7 +65,7 @@ class NN1(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(16,32),
+            nn.Linear(N_FEATURES,32),
             nn.Tanh(), 
             nn.Linear(32,32),
             nn.Tanh(),
@@ -72,7 +80,7 @@ class NN2(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(16,64),
+            nn.Linear(N_FEATURES,64),
             nn.Tanh(), 
             nn.Linear(64,64),
             nn.Tanh(),
@@ -83,35 +91,20 @@ class NN2(nn.Module):
         output = self.net(x)
         return output
 
-class NN3(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(16,64),
-            nn.Tanh(), 
-            nn.Linear(64,64),
-            nn.Tanh(),
-            nn.Linear(64,32),
-            nn.Tanh(),
-            nn.Linear(32,1)
-        ) 
-    
-    def forward(self, x):
-        output = self.net(x)
-        return output
+# NN3 is defined in nn_model.py (shared with the testing scripts)
 
 # Load Dataset
 #-------------------------------------------------------------------------
 
 # Open CSV file
-with open('features5.csv', mode='r', newline='', encoding='utf-8') as file:
+with open('features_fullmeta1.csv', mode='r', newline='', encoding='utf-8') as file:
     # Create a reader object
     csv_reader = csv.reader(file)
     
     # Convert the reader object directly into a list
     Data_set = [[float(x) for x in row] for row in csv_reader]
 
-with open('ratios5.csv', mode='r', newline='', encoding='utf-8') as file:
+with open('ratios_fullmeta1.csv', mode='r', newline='', encoding='utf-8') as file:
     # Create a reader object
     csv_reader = csv.reader(file)
     
@@ -157,12 +150,21 @@ print(f"Size of Target Ratios: {len(Ratios)}x{len(Ratios[0])}" )
 #     )
 # #----------------------------------------------------------------------------------------
 
-# Convert Dataset into np.arrays
-X = np.array(Data_set)
-y = np.array(Ratios)
+# Trajectory of each example (ODE, initial condition, parameters, tolerance), so that
+# neighbouring points of one solution curve are never split between train and test
+with open('metadata_full1.csv', mode='r', newline='', encoding='utf-8') as file:
+    meta_rows = list(csv.DictReader(file))
+groups = [(m["ODE"], m["initial_condition"], m["parameters"], m["tolerance"]) for m in meta_rows]
+group_ids = {g: k for k, g in enumerate(dict.fromkeys(groups))}
+groups = np.array([group_ids[g] for g in groups])
 
-# Split into training and test sets 
-X_train, X_test, y_train, y_test = train_test_split(X,y, test_size=0.2, random_state=42)
+# Convert Dataset into np.arrays. The network predicts log(ratio)
+X = np.array(Data_set)
+y = np.log(np.array(Ratios))
+
+# Split into training and test sets by trajectory
+train_idx, test_idx = next(GroupShuffleSplit(test_size=0.2, random_state=42).split(X, y, groups))
+X_train, X_test, y_train, y_test = X[train_idx], X[test_idx], y[train_idx], y[test_idx]
 
 # # Standardize
 # train_mean = X_train.mean(axis=0, keepdims=True)
@@ -356,11 +358,13 @@ for epoch in range(num_epochs):
             num_test += X.size(0)
 
             # Compute Pointwise relative error to diagnose very poor preditions
-            point_err = torch.abs(y - test_output) / torch.abs(y)
+            # (outputs are log ratios - compare ratios)
+            r_true, r_pred = torch.exp(y), torch.exp(test_output)
+            point_err = torch.abs(r_true - r_pred) / torch.abs(r_true)
             point_errors.extend(point_err.flatten().cpu().numpy())
 
-            targets.extend(y.flatten().cpu().numpy())
-            predictions.extend(test_output.flatten().cpu().numpy())
+            targets.extend(r_true.flatten().cpu().numpy())
+            predictions.extend(r_pred.flatten().cpu().numpy())
 
         test_losses.append(test_loss/num_test)
 
@@ -439,6 +443,7 @@ plt.show()
 # # print(norm_err)
 # # print(test_losses)
 
-# # Save weights
-# torch.save(model.state_dict(), 'model_weights_s1.pth')
-# print("Model weights saved successfully!")
+# Save weights and the standardization used to train them (loaded together in testing)
+torch.save(model.state_dict(), weights_path(SEED))
+np.savez('standardization_NN3.npz', mean=train_mean, std=train_std)
+print("Model weights and standardization saved successfully!")
