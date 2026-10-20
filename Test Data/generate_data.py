@@ -178,10 +178,12 @@ def build_features(indices, solution, time_steps, stage_history):
         next_step_ratio.append(r_next)
 
     return data_list, next_step_ratio
-# Perturbed examples: the last step is replaced by a step of size p*h (p log-uniform in
-# PERTURB_RANGE) so the network also sees states where the step size is wrong.
-# Label = factor the PI controller would apply after that step's error.
+# Perturbed examples: the last N_PERTURB_STEPS steps are retaken with sizes p_k*h_k
+# (independent p_k, log-uniform in PERTURB_RANGE), so the network also sees states where
+# the step size is wrong and ratio histories that are not smooth.
+# Label = factor the PI controller would apply after the last step's error.
 N_PERTURB = 2
+N_PERTURB_STEPS = 3
 PERTURB_RANGE = (0.5, 2.0)
 perturb_rng = np.random.default_rng(0)
 
@@ -190,8 +192,9 @@ def build_features_solhist(indices, times, solution, full_solution, time_steps, 
     """ Builds feature vectors with build_feature (rk45utils): solution history,
     log ratio history, log h, log tol and derivative estimates up to order 5.
     For each index i, adds the example on the PI trajectory (label: PI's next ratio
-    time_steps[i]/time_steps[i-1]) and N_PERTURB examples where the step into
-    point i is rescaled (label: pi_factor of that step's error).
+    time_steps[i]/time_steps[i-1]) and N_PERTURB examples where the last
+    N_PERTURB_STEPS steps into point i are rescaled (label: pi_factor of the last
+    step's error).
     indices - of chosen data points to be added to dataset
     num_hist - number of previous solution points (must equal NUM_HIST)
     """
@@ -225,17 +228,26 @@ def build_features_solhist(indices, times, solution, full_solution, time_steps, 
             examples = [(1.0, build_feature(t_win, y_win, d_win, steps, tol),
                          time_steps[i]/time_steps[i-1])]
 
-            # Perturbed examples: retake the step into point i with size p*h
-            t_prev, y_prev, h = times[i-1], full_solution[i-1], time_steps[i-1]
-            for p in np.exp(perturb_rng.uniform(*np.log(PERTURB_RANGE), N_PERTURB)):
-                y_new, err = trial_step(solver, t_prev, y_prev, p*h)
-                t_new = t_prev + p*h
-                examples.append((p,
-                                 build_feature(t_win[:-1] + [t_new],
-                                               y_win[:-1] + [y_new[sol_component]],
-                                               d_win[:-1] + [deriv(t_new, y_new)],
-                                               steps[:-1] + [p*h], tol),
-                                 pi_factor(err)))
+            # Perturbed examples: retake the last n steps into point i, step k with
+            # size p_k*time_steps[i-n+k], rolling the solution forward
+            n = N_PERTURB_STEPS
+            for _ in range(N_PERTURB):
+                ps = np.exp(perturb_rng.uniform(*np.log(PERTURB_RANGE), n))
+                t_cur, y_cur = times[i-n], full_solution[i-n]
+                new_t, new_y, new_d, new_h = [], [], [], []
+                for k, p in enumerate(ps):
+                    h_k = p*time_steps[i-n+k]
+                    y_cur, err = trial_step(solver, t_cur, y_cur, h_k)
+                    t_cur = t_cur + h_k
+                    new_t.append(t_cur)
+                    new_y.append(y_cur[sol_component])
+                    new_d.append(deriv(t_cur, y_cur))
+                    new_h.append(h_k)
+                feature = build_feature(t_win[:-n] + new_t, y_win[:-n] + new_y,
+                                        d_win[:-n] + new_d, steps[:-n] + new_h, tol)
+                if not (np.isfinite(err) and np.all(np.isfinite(feature))):
+                    continue  # larger steps can blow up (e.g. y' = y^2 near its pole)
+                examples.append((";".join(f"{p:.3f}" for p in ps), feature, pi_factor(err)))
 
             for p, feature, r_next in examples:
                 data_list.append(feature)
