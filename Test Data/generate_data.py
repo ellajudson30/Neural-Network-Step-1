@@ -178,18 +178,34 @@ def build_features(indices, solution, time_steps, stage_history):
         next_step_ratio.append(r_next)
 
     return data_list, next_step_ratio
-def build_features_solhist(indices, times, solution, full_solution, time_steps, num_hist, tol, 
+# Perturbed examples: the last step is replaced by a step of size p*h (p log-uniform in
+# PERTURB_RANGE) so the network also sees states where the step size is wrong.
+# Label = factor the PI controller would apply after that step's error.
+N_PERTURB = 2
+PERTURB_RANGE = (0.5, 2.0)
+perturb_rng = np.random.default_rng(0)
+
+def build_features_solhist(indices, times, solution, full_solution, time_steps, num_hist, tol,
                            fcn, sol_component, ode_name, params, initial_condition):
-    """ Builds a feature vector containing solution and ratio history and log(tol).
-    Feature vector is of length: (num_hist + 1)*2 +1
-    I.e. : num_hist = 2, index i
-    => vec = [sol[i-2], sol[i-1], sol[i], r[i-2], r[i-1], r[i], log(tol)]
+    """ Builds feature vectors with build_feature (rk45utils): solution history,
+    log ratio history, log h, log tol and derivative estimates up to order 5.
+    For each index i, adds the example on the PI trajectory (label: PI's next ratio
+    time_steps[i]/time_steps[i-1]) and N_PERTURB examples where the step into
+    point i is rescaled (label: pi_factor of that step's error).
     indices - of chosen data points to be added to dataset
-    num_hist - number of previous solution points (adds numhist+1 items)
+    num_hist - number of previous solution points (must equal NUM_HIST)
     """
+    assert num_hist == NUM_HIST
     data_list = []
     next_step_ratio = []
     metadata_list = []
+
+    # Solver object only provides the RK45 tableau and error norm for trial steps
+    solver = RK45(fcn, times[0], full_solution[0], times[-1], rtol=tol, atol=tol)
+
+    def deriv(t, y):
+        return float(np.asarray(fcn(t, y)).reshape(-1)[sol_component])
+
     for i in indices:
 
         # Check if index is at the end of the time span
@@ -199,44 +215,45 @@ def build_features_solhist(indices, times, solution, full_solution, time_steps, 
         elif i < num_hist + 2:
             print("not enough solution history at this point")
         else:
-            # Add Solution History
-            feature = []
-            for k in range(num_hist, -1, -1):
-                feature.append(float(solution[i-k]))
+            w = slice(i-num_hist, i+1)
+            t_win = list(times[w])
+            y_win = list(solution[w])
+            d_win = [deriv(t, y) for t, y in zip(times[w], full_solution[w])]
+            steps = list(time_steps[i-num_hist-2:i])
 
-            # Add ratio history
-            for j in range(num_hist, -1, -1):
-                r = time_steps[i-j-1]/time_steps[i-j-2]
-                feature.append(r)
+            # Example on the PI trajectory
+            examples = [(1.0, build_feature(t_win, y_win, d_win, steps, tol),
+                         time_steps[i]/time_steps[i-1])]
 
-            # Add derivative history
-            for l in range(num_hist,-1,-1):
-                deriv = fcn(times[i-l], full_solution[i-l])
-                deriv = np.asarray(deriv).reshape(-1)[sol_component]
-                # deriv = deriv[sol_comp]
-                feature.append(float(deriv))
+            # Perturbed examples: retake the step into point i with size p*h
+            t_prev, y_prev, h = times[i-1], full_solution[i-1], time_steps[i-1]
+            for p in np.exp(perturb_rng.uniform(*np.log(PERTURB_RANGE), N_PERTURB)):
+                y_new, err = trial_step(solver, t_prev, y_prev, p*h)
+                t_new = t_prev + p*h
+                examples.append((p,
+                                 build_feature(t_win[:-1] + [t_new],
+                                               y_win[:-1] + [y_new[sol_component]],
+                                               d_win[:-1] + [deriv(t_new, y_new)],
+                                               steps[:-1] + [p*h], tol),
+                                 pi_factor(err)))
 
-            feature.append(np.log(tol))
+            for p, feature, r_next in examples:
+                data_list.append(feature)
+                next_step_ratio.append(r_next)
 
-            data_list.append(feature)
-
-            # Create vector of next time steps
-            r_next = time_steps[i]/time_steps[i-1]
-            next_step_ratio.append(r_next)
-
-            # Metadata corresponding to THIS example
-            metadata_list.append([
-                ode_name,
-                str(initial_condition),
-                str(params),
-                i,
-                times[i],
-                tol,
-                sol_component,
-                solution[i],
-                r_next
-            ])
-
+                # Metadata corresponding to THIS example
+                metadata_list.append([
+                    ode_name,
+                    str(initial_condition),
+                    str(params),
+                    i,
+                    times[i],
+                    tol,
+                    sol_component,
+                    solution[i],
+                    r_next,
+                    p
+                ])
 
     return data_list, next_step_ratio, metadata_list
 
@@ -547,7 +564,8 @@ if __name__ == "__main__":
             "tolerance",
             "component",
             "solution",
-            "true_ratio"
+            "true_ratio",
+            "step_perturbation"
         ])
 
         writer.writerows(Meta_data)

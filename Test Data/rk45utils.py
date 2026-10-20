@@ -1,3 +1,4 @@
+import math
 import numpy as np
 from scipy.integrate import RK45
 from scipy.integrate._ivp.rk import rk_step
@@ -156,6 +157,56 @@ def run_RK45(fcn, t0, y0, tf, tol):
         solver.rejected_steps,
         np.array(solver.rejections_per_step)
         )
+
+# Feature vector shared by data generation and testing
+#---------------------------------------------------------------------
+NUM_HIST = 4                        # history points before the current point
+N_FEATURES = 2*(NUM_HIST+1) + 2 + 2*5  # sol, log ratios, log h, log tol, 5 derivs (log|.| and sign)
+DERIV_FLOOR = 1e-20                 # floor for log|derivative|
+
+def build_feature(times, sol, derivs, steps, tol):
+    """Build one feature vector from windows ending at the current point.
+    times, sol, derivs - NUM_HIST+1 values of t, y and y' (one solution component)
+    steps - NUM_HIST+2 accepted step sizes, the last one being the step into the current point
+    Returns (in order): sol history, log ratio history, log h, log tol,
+    log|y^(k)| for k=1..5 at the current point, sign(y^(k)) for k=1..5.
+    """
+    times = np.asarray(times, dtype=float)
+    steps = np.asarray(steps, dtype=float)
+    h = steps[-1]
+
+    log_ratios = np.log(steps[1:] / steps[:-1])
+
+    # Derivatives at the current point: y' is exact, y''..y^(5) come from the
+    # degree-4 polynomial through the y' history (times scaled by h for conditioning)
+    s = (times - times[-1]) / h
+    coeffs = np.polyfit(s, derivs, NUM_HIST)[::-1]   # coeffs[k] multiplies s^k
+    d = [float(derivs[-1])]
+    for k in range(1, NUM_HIST+1):
+        d.append(math.factorial(k) * coeffs[k] / h**k)
+    d = np.array(d)
+
+    feature = list(sol) + list(log_ratios) + [np.log(h), np.log(tol)]
+    feature += list(np.log(np.maximum(np.abs(d), DERIV_FLOOR)))
+    feature += list(np.sign(d))
+    return feature
+
+def trial_step(solver, t, y, h):
+    """Take one RK45 step of size h from (t, y) using the solver's tableau.
+    Returns the new solution and the error norm the PI controller would see."""
+    y = np.asarray(y, dtype=float)
+    K = np.empty((solver.n_stages + 1, solver.n), dtype=float)
+    f = np.asarray(solver.fun(t, y), dtype=float)
+    y_new, _ = rk_step(solver.fun, t, y, f, h, solver.A, solver.B, solver.C, K)
+    scale = solver.atol + np.maximum(np.abs(y), np.abs(y_new)) * solver.rtol
+    return y_new, solver._estimate_error_norm(K, h, scale)
+
+def pi_factor(error_norm):
+    """Step-size factor the PI controller applies after a step with this error norm
+    (same constants as RK45_counting._step_impl)."""
+    if error_norm == 0:
+        return 10.0
+    return float(np.clip(0.9 * error_norm ** (-1/5), 0.2, 10.0))
 
 # Choose the solution component used in feature vectors
 def most_varying_component(fcn, t0, y0, tf, tol):
