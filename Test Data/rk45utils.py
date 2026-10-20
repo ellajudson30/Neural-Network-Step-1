@@ -161,15 +161,39 @@ def run_RK45(fcn, t0, y0, tf, tol):
 # Feature vector shared by data generation and testing
 #---------------------------------------------------------------------
 NUM_HIST = 4                        # history points before the current point
-N_FEATURES = 2*(NUM_HIST+1) + 2 + 2*5  # sol, log ratios, log h, log tol, 5 derivs (log|.| and sign)
+# sol, log ratios, log h, log tol, 5 derivs (log|.| and sign), stiffness (log h*rho and sign)
+N_FEATURES = 2*(NUM_HIST+1) + 2 + 2*5 + 2
 DERIV_FLOOR = 1e-20                 # floor for log|derivative|
+STIFF_FLOOR = 1e-12                 # floor for log(h*rho)
+STIFF_ITERS = 3                     # power iterations (one f evaluation each)
 
-def build_feature(times, sol, derivs, steps, tol):
+def stiffness_estimate(fcn, t, y, n_iter=STIFF_ITERS):
+    """Estimate the dominant eigenvalue of the Jacobian df/dy at (t, y) by power iteration
+    on finite-difference Jacobian-vector products, J v ~ (f(t, y + eps v) - f(t, y)) / eps.
+    For a scalar ODE one iteration gives df/dy exactly (up to rounding).
+    Returns (rho, sign): the spectral radius estimate and the sign of the Rayleigh
+    quotient v.Jv (negative for decaying modes, which is when a large rho means stiffness)."""
+    y = np.asarray(y, dtype=float).reshape(-1)
+    f0 = np.asarray(fcn(t, y), dtype=float).reshape(-1)
+    v = np.ones_like(y) / np.sqrt(y.size)
+    rho, rq = 0.0, 0.0
+    for _ in range(n_iter):
+        eps = 1e-7 * (1 + np.linalg.norm(y))
+        jv = (np.asarray(fcn(t, y + eps*v), dtype=float).reshape(-1) - f0) / eps
+        rho, rq = float(np.linalg.norm(jv)), float(v @ jv)
+        if not (np.isfinite(rho) and rho > 0):
+            break
+        v = jv / rho
+    return rho, float(np.sign(rq))
+
+def build_feature(times, sol, derivs, steps, tol, stiff):
     """Build one feature vector from windows ending at the current point.
     times, sol, derivs - NUM_HIST+1 values of t, y and y' (one solution component)
     steps - NUM_HIST+2 accepted step sizes, the last one being the step into the current point
+    stiff - (rho, sign) from stiffness_estimate at the current point
     Returns (in order): sol history, log ratio history, log h, log tol,
-    log|y^(k)| for k=1..5 at the current point, sign(y^(k)) for k=1..5.
+    log|y^(k)| for k=1..5 at the current point, sign(y^(k)) for k=1..5,
+    log(h*rho), sign of the dominant eigenvalue's real part.
     """
     times = np.asarray(times, dtype=float)
     steps = np.asarray(steps, dtype=float)
@@ -189,6 +213,10 @@ def build_feature(times, sol, derivs, steps, tol):
     feature = list(sol) + list(log_ratios) + [np.log(h), np.log(tol)]
     feature += list(np.log(np.maximum(np.abs(d), DERIV_FLOOR)))
     feature += list(np.sign(d))
+
+    # h*rho measures how close the step is to RK45's stability limit (|h*lambda| ~ 3)
+    rho, sign = stiff
+    feature += [np.log(max(h*rho, STIFF_FLOOR)), sign]
     return feature
 
 def trial_step(solver, t, y, h):

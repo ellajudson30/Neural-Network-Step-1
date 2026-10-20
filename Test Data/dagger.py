@@ -1,12 +1,10 @@
 import csv
-import os
-import subprocess
-import sys
 import numpy as np
 import torch
-import torch.nn as nn
 import generate_data as g
 from rk45utils import *
+from nn_model import load_ensemble
+from train_ensemble import train_ensemble
 
 # DAgger for stage 1
 #------------------------------------------------------------------------
@@ -15,12 +13,13 @@ from rk45utils import *
 # iteration: let the trained network drive the solver on the training ODEs, label
 # every state it reaches with what the PI controller would do there (pi_factor of the
 # error of the step into it), add those examples to the dataset and retrain.
+# The network driving the rollouts is the seed ensemble (nn_model.py).
 # The error estimate is only used for labels, never as a network input.
 #
-# Run after generate_data.py and cross_valid.py. Appends to the dataset csv files,
+# Run after generate_data.py and train_ensemble.py. Appends to the dataset csv files,
 # so rerun generate_data.py to start again from the PI-only dataset.
 
-N_ITERATIONS = 3
+N_ITERATIONS = 2           # a third round did not help in testing
 TOLS = [1e-3, 1e-4, 1e-6, 1e-8, 1e-10]
 MAX_STEPS = 3000           # per rollout
 MAX_PER_TRAJECTORY = 30    # states kept per rollout (random sample)
@@ -41,28 +40,8 @@ JOBS += [("lorenz", f, p, g.L_y0, g.L_t_span) for f, p in g.L_fcns]
 JOBS += [("chirp", f, p, g.chirp_y0, g.chirp_t_span) for f, p in g.chirp_fcns]
 JOBS += [("gaussian pulse", g.pulse, {}, g.pulse_y0, g.pulse_t_span)]
 
-# Same architecture as NN3 in cross_valid.py
-class NN(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(N_FEATURES,64),
-            nn.Tanh(),
-            nn.Linear(64,64),
-            nn.Tanh(),
-            nn.Linear(64,32),
-            nn.Tanh(),
-            nn.Linear(32,1)
-        )
-
-    def forward(self, x):
-        output = self.net(x)
-        return output
-
 def load_model():
-    model = NN()
-    model.load_state_dict(torch.load('model_weights_s1.pth'))
-    model.eval()
+    model = load_ensemble()
     stats = np.load('standardization_NN3.npz')
     return model, stats['mean'], stats['std']
 
@@ -93,7 +72,8 @@ def rollout(fcn, t0, y0, tf, tol, model, train_mean, train_std):
         w = NUM_HIST + 1
         try:
             feature = build_feature(times[-w:], [y[c] for y in solution[-w:]], derivs[-w:],
-                                    steps[-(NUM_HIST+2):], tol)
+                                    steps[-(NUM_HIST+2):], tol,
+                                    stiffness_estimate(fcn, times[-1], solution[-1]))
         except (np.linalg.LinAlgError, ValueError):
             break  # derivative fit fails once the network's steps make the solution blow up
         if not np.all(np.isfinite(feature)):
@@ -151,6 +131,5 @@ if __name__ == "__main__":
             with open(path, mode="a", newline="", encoding="utf-8") as file:
                 csv.writer(file).writerows(rows)
 
-        # Retrain on the enlarged dataset (plots switched off so the loop doesn't stop)
-        subprocess.run([sys.executable, "cross_valid.py"], check=True,
-                       env=dict(os.environ, MPLBACKEND="Agg"))
+        # Retrain every ensemble member on the enlarged dataset
+        train_ensemble()

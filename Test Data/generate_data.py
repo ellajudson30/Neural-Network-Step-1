@@ -225,7 +225,8 @@ def build_features_solhist(indices, times, solution, full_solution, time_steps, 
             steps = list(time_steps[i-num_hist-2:i])
 
             # Example on the PI trajectory
-            examples = [(1.0, build_feature(t_win, y_win, d_win, steps, tol),
+            examples = [(1.0, build_feature(t_win, y_win, d_win, steps, tol,
+                                            stiffness_estimate(fcn, times[i], full_solution[i])),
                          time_steps[i]/time_steps[i-1])]
 
             # Perturbed examples: retake the last n steps into point i, step k with
@@ -244,7 +245,8 @@ def build_features_solhist(indices, times, solution, full_solution, time_steps, 
                     new_d.append(deriv(t_cur, y_cur))
                     new_h.append(h_k)
                 feature = build_feature(t_win[:-n] + new_t, y_win[:-n] + new_y,
-                                        d_win[:-n] + new_d, steps[:-n] + new_h, tol)
+                                        d_win[:-n] + new_d, steps[:-n] + new_h, tol,
+                                        stiffness_estimate(fcn, t_cur, y_cur))
                 if not (np.isfinite(err) and np.all(np.isfinite(feature))):
                     continue  # larger steps can blow up (e.g. y' = y^2 near its pole)
                 examples.append((";".join(f"{p:.3f}" for p in ps), feature, pi_factor(err)))

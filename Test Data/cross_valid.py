@@ -10,10 +10,13 @@ import torch.optim as optim
 import matplotlib.pyplot as plt
 from sklearn.model_selection import KFold, GroupShuffleSplit
 import csv
+import sys
 from rk45utils import run_RK45, N_FEATURES
+from nn_model import NN3, weights_path
 
-# Seed weight initialisation and batch shuffling so training runs are reproducible
-SEED = 0
+# Seed weight initialisation and batch shuffling so training runs are reproducible.
+# Usage: python cross_valid.py <seed>  (default 0); train_ensemble.py runs one per seed
+SEED = int(sys.argv[1]) if len(sys.argv) > 1 else 0
 torch.manual_seed(SEED)
 np.random.seed(SEED)
 
@@ -88,22 +91,7 @@ class NN2(nn.Module):
         output = self.net(x)
         return output
 
-class NN3(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(N_FEATURES,64),
-            nn.Tanh(), 
-            nn.Linear(64,64),
-            nn.Tanh(),
-            nn.Linear(64,32),
-            nn.Tanh(),
-            nn.Linear(32,1)
-        ) 
-    
-    def forward(self, x):
-        output = self.net(x)
-        return output
+# NN3 is defined in nn_model.py (shared with the testing scripts)
 
 # Load Dataset
 #-------------------------------------------------------------------------
@@ -456,6 +444,6 @@ plt.show()
 # # print(test_losses)
 
 # Save weights and the standardization used to train them (loaded together in testing)
-torch.save(model.state_dict(), 'model_weights_s1.pth')
+torch.save(model.state_dict(), weights_path(SEED))
 np.savez('standardization_NN3.npz', mean=train_mean, std=train_std)
 print("Model weights and standardization saved successfully!")

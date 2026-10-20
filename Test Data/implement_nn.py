@@ -7,29 +7,12 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 from rk45utils import *
+from nn_model import load_ensemble
 
 # Import trained NN 
 #-----------------------------------------------------------------------
-class NN(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(N_FEATURES,64),
-            nn.Tanh(), 
-            nn.Linear(64,64),
-            nn.Tanh(),
-            nn.Linear(64,32),
-            nn.Tanh(),
-            nn.Linear(32,1)
-        ) 
-    
-    def forward(self, x):
-        output = self.net(x)
-        return output
-
-model = NN()
-model.load_state_dict(torch.load('model_weights_s1.pth'))
-model.eval()
+# Average of the networks trained with each seed in nn_model.ENSEMBLE_SEEDS
+model = load_ensemble()
 
 # Load standardization variables
 stats = np.load('standardization_NN3.npz')
@@ -94,7 +77,8 @@ def run_solverNN(fcn, t0, y0, tf, tol, model, numhist, sol_component=None):
             derivs = [float(np.asarray(fcn(t, y)).reshape(-1)[sol_component])
                       for t, y in zip(times[-w:], solution[-w:])]
             feature = build_feature(times[-w:], [y[sol_component] for y in solution[-w:]],
-                                    derivs, time_steps[-(numhist+2):], tol)
+                                    derivs, time_steps[-(numhist+2):], tol,
+                                    stiffness_estimate(fcn, times[-1], solution[-1]))
 
             # Standardize feature
             feature = np.array(feature).reshape(1, -1)
